@@ -97,7 +97,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     return x_ellipse, y_ellipse
 
 
-def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf):
+def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
 
     if np.any(np.isnan(VT)):
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -133,13 +133,13 @@ def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf):
     Q = np.array([[q11, q12], [q12, q22]])
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     x0, y0 = l0, r0
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound)
+    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max)
     
     return l0, r0, w, Q, Rc_opt, psi0_opt
 
 
 
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
 
     if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -211,13 +211,15 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
 
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound)
+    if np.isnan(x0):
+        print('yerp')
+    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max)
 
     return x0, y0, w, Q, Rc_opt, psi0_opt 
 
 
 
-def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf):
+def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
 
     if np.any(np.isnan(ui)):
         return np.nan, np.nan, np.nan, np.array([[np.nan, np.nan], [np.nan, np.nan]]), np.nan, np.nan
@@ -243,15 +245,14 @@ def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf):
 
     Q = np.array([[q11, q12], [q12, q22]])
 
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound)
+    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max)
     
-    return x0, y0, w, Q, Rc_opt, psi0_opt
+    return x0, y0, w, Q, Rc_opt, psi0_opt 
 
 
-
-def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf):
+def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
     from scipy.optimize import least_squares
-    if np.any(np.isnan(ui)):
+    if np.any(np.isnan(ui)) or np.isnan(x0):
         return np.nan, np.nan
 
     cyc = 'AE' if Q11 > 0 else 'CE'
@@ -287,10 +288,13 @@ def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_
         bounds_lower = [1e-6, 1e-6]   # Rc ≥ 1, scale ≥ 0.01
         bounds_upper = [Rc_upper_bound, psi0_abs_bound] # Rc ≤ 20, scale ≤ 100
 
-    result = least_squares(residuals, params_init, bounds=(bounds_lower, bounds_upper), args=(xi, yi, ui, vi))
+    try:
+        result = least_squares(residuals, params_init, bounds=(bounds_lower, bounds_upper), args=(xi, yi, ui, vi))
+    except ValueError:
+        return np.nan, np.nan
     Rc_opt, psi0_opt = result.x
 
-    if Rc_opt > 50:
+    if Rc_opt > Rc_max: #km
         # Initial guesses: Rc=10, psi0=1
         if cyc == 'CE':
             params_init = [5.0, -30.0]
@@ -301,12 +305,13 @@ def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_
             bounds_lower = [1e-6, 1e-6]   # Rc ≥ 1, scale ≥ 0.01
             bounds_upper = [Rc_upper_bound, psi0_abs_bound] # Rc ≤ 20, scale ≤ 100
     
+    try:
         result = least_squares(residuals, params_init, bounds=(bounds_lower, bounds_upper), args=(xi, yi, ui, vi))
-        Rc_opt, psi0_opt = result.x
-
+    except ValueError:
+        return Rc_opt, psi0_opt
+    Rc_opt, psi0_opt = result.x
+    
     return Rc_opt, psi0_opt
-
-
 
 
 def gaussian_vel_reconstruction(x0, y0, Q11, Q12, Q22, Rc, psi0, X=None, Y=None):
@@ -342,7 +347,6 @@ def gaussian_vel_reconstruction(x0, y0, Q11, Q12, Q22, Rc, psi0, X=None, Y=None)
 from scipy.sparse import diags, eye, kron, csr_matrix
 from scipy.sparse.linalg import spsolve
 def solve_w(U, V, x, y, z, f=-7.7e-5, N2=5e-3):
-
 
     # tic = time.time()
 
@@ -435,6 +439,57 @@ def extract_transect_center(u, v, X, Y, x0, y0, r=30):
         'xx': xx, 'yy': yy
     }
 
+def plot_isosurface(ax, Xn, Yn, zn, Un, Vn, level=-0.2, elev=13, azim=135, flag=False):
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    from skimage.measure import marching_cubes
+    from scipy.ndimage import map_coordinates
+    dx, dy = Xn[0,1]-Xn[0,0], Yn[1,0]-Yn[0,0]
+    ow = calc_ow(Un, Vn, dx*1000, dx*1000, flag=flag)
+    sigma_ow = normalize_matrix(ow)
+
+    Xg, Yg, Zg = np.meshgrid(Xn[:, 0], Yn[0, :], zn/1000, indexing='xy' if flag else 'ij')
+
+    verts, faces, normals, values = marching_cubes(sigma_ow, level=level)
+    pts = verts.T
+    real_x = map_coordinates(Xg, pts, order=1)
+    real_y = map_coordinates(Yg, pts, order=1)
+    real_z = map_coordinates(Zg, pts, order=1)
+    real_verts = np.vstack((real_x, real_y, real_z)).T
+
+    mesh = Poly3DCollection(real_verts[faces], alpha=0.3)
+    mesh.set_edgecolor('k')
+    ax.add_collection3d(mesh)
+    ax.set_xlim(Xg.min(), Xg.max())
+    ax.set_ylim(Yg.min(), Yg.max())
+    ax.set_zlim(Zg.min(), Zg.max())
+    ax.invert_zaxis()
+    ax.set_xlabel('x (km)')
+    ax.set_ylabel('y (km)')
+    ax.set_zlabel('Depth (km)')
+    ax.view_init(elev=elev, azim=azim)
+
+def smooth(x, y, num=1000, window=100):
+    from scipy.interpolate import interp1d
+    from scipy.ndimage import uniform_filter1d
+    x = np.asarray(x); y = np.asarray(y)
+    # Step 1: interpolate to uniform y
+    y_uniform = np.linspace(y.min(), y.max(), num)
+    f_interp = interp1d(y, x, kind='linear', fill_value='extrapolate')
+    x_uniform = f_interp(y_uniform)
+    # Step 2: smooth x on the uniform y grid
+    x_smooth_uniform = uniform_filter1d(x_uniform, size=window)
+    # Step 3: interpolate back to original y
+    f_smooth = interp1d(y_uniform, x_smooth_uniform, kind='linear', fill_value='extrapolate')
+    x_smooth = f_smooth(y)
+
+    return x_smooth
+
+
+
+
+
+
+
 
 
 
@@ -444,31 +499,29 @@ def extract_transect_center(u, v, X, Y, x0, y0, r=30):
 
 # older
 
+def calc_ow(u, v, dx, dy, transpose=False):
 
+    if transpose:
+        u = u.transpose(1, 0, 2)
+        v = v.transpose(1, 0, 2)
+        dx, dy = dy, dx
 
-def calc_ow(uu, vv, dx, dy, flag=True):
-    WIDTH, LENGTH, SIGMAS = uu.shape
-    uu = uu.copy()
-    vv = vv.copy()
+    u_x = np.gradient(u, dx, axis=0)
+    u_y = np.gradient(u, dy, axis=1)
+    v_x = np.gradient(v, dx, axis=0)
+    v_y = np.gradient(v, dy, axis=1)
 
-    if flag:
-        for k in range(SIGMAS):
-            uu[:,:,k] = uu[:,:,k].T
-            vv[:,:,k] = vv[:,:,k].T
-    
-    u_x = (uu[2:,:,:] - uu[:-2,:,:]) / (2*dx)
-    u_y = (uu[:,2:,:] - uu[:,:-2,:]) / (2*dy)
-    v_x = (vv[2:,:,:] - vv[:-2,:,:]) / (2*dx)
-    v_y = (vv[:,2:,:] - vv[:,:-2,:]) / (2*dy)
-    u_x = np.concatenate((np.zeros((1, LENGTH, SIGMAS)), u_x, np.zeros((1, LENGTH, SIGMAS))), axis=0)
-    v_x = np.concatenate((np.zeros((1, LENGTH, SIGMAS)), v_x, np.zeros((1, LENGTH, SIGMAS))), axis=0)
-    u_y = np.concatenate((np.zeros((WIDTH, 1, SIGMAS)), u_y, np.zeros((WIDTH, 1, SIGMAS))), axis=1)
-    v_y = np.concatenate((np.zeros((WIDTH, 1, SIGMAS)), v_y, np.zeros((WIDTH, 1, SIGMAS))), axis=1)
-    s_n = u_x - v_y
-    s_s = v_x + u_y
+    sn   = u_x - v_y
+    ss   = v_x + u_y
     vort = v_x - u_y
-    ow = s_n**2 + s_s**2 - vort**2
-    return ow
+
+    ow = sn**2 + ss**2 - vort**2
+
+    if transpose:
+        return ow.transpose(1, 0, 2)
+    else:
+        return ow
+
     
 def normalize_matrix(matrix, mask_value=np.nan):
     valid_mask = np.where(matrix == mask_value, 0, 1)
