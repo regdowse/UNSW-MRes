@@ -97,12 +97,11 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     return x_ellipse, y_ellipse
 
 
-def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True):
+def moca(l, VT, VN):
 
     if np.any(np.isnan(VT)):
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
-
     def find_root(x, y):
         coeffs = np.polyfit(x, y, 3)
         roots = np.roots(np.poly1d(coeffs))
@@ -132,14 +131,18 @@ def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, fla
     q11, q12, q22 = w/4, 0, w/4
     Q = np.array([[q11, q12], [q12, q22]])
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
-    x0, y0 = l0, r0
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
+    xc, yc = l0, r0
+
+    Rc = estimate_Rc(xi, yi, ui, vi, xc, yc, Q)
+    psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1])
     
-    return l0, r0, w, Q, Rc_opt, psi0_opt
+    # Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
+    
+    return l0, r0, w, Q, Rc, psi0
 
 
 
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
 
     if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -192,8 +195,8 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound
     if denom == 0:
         raise ZeroDivisionError("Denominator is zero.")
         
-    x0 = - (alpha * gamma + beta * C1) / denom  + center_x
-    y0 = (beta * gamma - alpha * B1) / denom + center_y
+    xc = - (alpha * gamma + beta * C1) / denom  + center_x
+    yc = (beta * gamma - alpha * B1) / denom + center_y
     w = 2 * (q11 + q22)
 
     Q = np.array([[q11, q12], [q12, q22]])
@@ -211,13 +214,15 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
 
-    if np.isnan(x0):
-        print('yerp')
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
+    Rc = estimate_Rc(xi, yi, ui, vi, xc, yc, Q)
+    psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1])
 
-    return x0, y0, w, Q, Rc_opt, psi0_opt 
 
-def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True):
+    # Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
+
+    return xc, yc, w, Q, Rc, psi0
+
+def espra(xi, yi, ui, vi):
 
     if np.any(np.isnan(ui)):
         return np.nan, np.nan, np.nan, np.array([[np.nan, np.nan], [np.nan, np.nan]]), np.nan, np.nan
@@ -237,15 +242,18 @@ def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=5
         result = least_squares(residuals, params_init, args=(x, y, u_i, v_i))
         return result.x 
 
-    x0, y0, q11, q12, q22 = fit_params(xi, yi, ui, vi)
+    xc, yc, q11, q12, q22 = fit_params(xi, yi, ui, vi)
 
     w = 2*(q11 + q22)
 
     Q = np.array([[q11, q12], [q12, q22]])
 
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
+    Rc = estimate_Rc(xi, yi, ui, vi, xc, yc, Q)
+    psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1])
     
-    return x0, y0, w, Q, Rc_opt, psi0_opt 
+    # Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
+    
+    return xc, yc, w, Q, Rc, psi0 
 
 def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True): # THIS IS INCORECT!!!
     from scipy.optimize import least_squares
@@ -530,10 +538,6 @@ def smooth(x, y, num=1000, window=100):
 
     return x_smooth
 
-
-
-
-
 def estimate_psi0(x, y, u, v, xc, yc, Q11, Q12, Q22):
     from scipy.optimize import minimize_scalar
     """Least‑squares estimate of ψ0 given core Q_ij and observed (u,v)."""
@@ -565,6 +569,75 @@ def estimate_psi0(x, y, u, v, xc, yc, Q11, Q12, Q22):
 
     return psi0 
 
+def estimate_Rc(x, y, u, v, xc, yc, Q, bins=60):
+    from scipy.signal import argrelmax          # local maxima (for the peak)
+    from numpy.linalg import eigh, norm
+    """
+    Estimate Rc (= sqrt(2) * radius of max tangential speed)
+    for an *eccentric* Gaussian eddy, given the core matrix Q_ij.
+
+    Parameters
+    ----------
+    x, y, u, v : 1‑D arrays
+        Positions and velocity components (same length, NaNs allowed).
+    xc, yc     : float
+        Eddy centre already estimated.
+    Q11, Q12, Q22 : float
+        Elements of the 2×2 symmetric core matrix Q.
+    bins       : int, optional
+        Number of radius bins for smoothing the tangential‑speed profile.
+
+    Returns
+    -------
+    Rc : float
+        Estimated core e‑folding radius.
+    """
+
+    # ---------- 1.  build a *positive‑definite* metric matrix -------------
+    #  If Q is negative‑definite (common when ψ₀>0), flip its sign
+    lam, V = eigh(Q)                 # eigen‑decomp (lam ascending)
+    if np.all(lam < 0):
+        Q = -Q
+        lam = -lam                   # now positive
+
+    # ---------- 2.  linear transform x' = L·(x‑xc) so that ρ = |x'| -------
+    L = np.diag(np.sqrt(lam)) @ V.T  # 2×2 matrix with LᵀL = Q
+
+    # centred coordinates
+    DX  = np.vstack((x - xc, y - yc))        # shape (2, N)
+    Xp  = L @ DX                             # transformed coords
+    r   = norm(Xp, axis=0)                   # elliptical radius ρ
+
+    # ---------- 3.  rotate velocities the same way ------------------------
+    VEL = np.vstack((u, v))                  # (2, N)
+    Vp  = L @ VEL                            # transformed velocities
+
+    # tangential component in transformed frame
+    theta = np.arctan2(Xp[1], Xp[0])
+    vt    = -Vp[0] * np.sin(theta) + Vp[1] * np.cos(theta)
+
+    good  = ~np.isnan(vt)
+    r, vt = r[good], vt[good]
+
+    # ---------- 4.  smooth vt(r) with bin averages ------------------------
+    r_bins  = np.linspace(r.min(), r.max(), bins + 1)
+    idx     = np.digitize(r, r_bins) - 1
+    counts  = np.bincount(idx, minlength=bins)
+    vt_sum  = np.bincount(idx, weights=vt, minlength=bins)
+    vt_mean = vt_sum / np.maximum(1, counts)
+    r_mid   = 0.5 * (r_bins[:-1] + r_bins[1:])
+
+    # ---------- 5.  locate radius where |vt| peaks -----------------------
+    peak_idx = argrelmax(np.abs(vt_mean))[0]
+    if peak_idx.size == 0:
+        raise RuntimeError("No clear peak detected in tangential speed.")
+
+    # pick the highest peak (in case of noise wiggles)
+    best     = peak_idx[np.argmax(np.abs(vt_mean[peak_idx]))]
+    r_max    = r_mid[best]
+
+    # ---------- 6.  Rc = √2 · r_max --------------------------------------
+    return np.sqrt(2) * r_max
 
 
 
