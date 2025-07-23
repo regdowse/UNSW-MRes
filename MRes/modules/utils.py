@@ -97,7 +97,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     return x_ellipse, y_ellipse
 
 
-def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
+def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True):
 
     if np.any(np.isnan(VT)):
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -133,13 +133,13 @@ def moca(l, VT, VN, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
     Q = np.array([[q11, q12], [q12, q22]])
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     x0, y0 = l0, r0
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max)
+    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
     
     return l0, r0, w, Q, Rc_opt, psi0_opt
 
 
 
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True):
 
     if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -213,13 +213,11 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_upper_bound=np.inf, psi0_abs_bound
 
     if np.isnan(x0):
         print('yerp')
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max)
+    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
 
     return x0, y0, w, Q, Rc_opt, psi0_opt 
 
-
-
-def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
+def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True):
 
     if np.any(np.isnan(ui)):
         return np.nan, np.nan, np.nan, np.array([[np.nan, np.nan], [np.nan, np.nan]]), np.nan, np.nan
@@ -245,19 +243,16 @@ def espra(xi, yi, ui, vi, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=5
 
     Q = np.array([[q11, q12], [q12, q22]])
 
-    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max)
+    Rc_opt, psi0_opt = espra_Rc(xi, yi, ui, vi, x0, y0, q11, q12, q22, Rc_upper_bound=Rc_upper_bound, psi0_abs_bound=psi0_abs_bound, Rc_max=Rc_max, flag_km=flag_km)
     
     return x0, y0, w, Q, Rc_opt, psi0_opt 
 
-
-def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50):
+def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_abs_bound=np.inf, Rc_max=50, flag_km=True): # THIS IS INCORECT!!!
     from scipy.optimize import least_squares
     if np.any(np.isnan(ui)) or np.isnan(x0):
         return np.nan, np.nan
 
     cyc = 'AE' if Q11 > 0 else 'CE'
-
-    # q11, q22 = np.abs(q11), np.abs(q22)
 
     def residuals(params, x, y, u_i, v_i):
         Rc, psi0 = params
@@ -278,13 +273,20 @@ def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_
 
         return np.concatenate([(u - u_i), (v - v_i)])
 
+    if flag_km:
+        Rc_init = 5.0
+        psi0_init = 30.0
+    else:
+        Rc_init = .5
+        psi0_init = .5
+
     # Initial guesses: Rc=10, psi0=1
     if cyc == 'AE':
-        params_init = [5.0, -30.0]
+        params_init = [Rc_init, -psi0_init]
         bounds_lower = [1e-6, -psi0_abs_bound]   # Rc ≥ 1, scale ≥ 0.01
         bounds_upper = [Rc_upper_bound, -1e-6] # Rc ≤ 20, scale ≤ 100
     elif cyc == 'CE':
-        params_init = [5.0, 30.0]
+        params_init = [Rc_init, psi0_init]
         bounds_lower = [1e-6, 1e-6]   # Rc ≥ 1, scale ≥ 0.01
         bounds_upper = [Rc_upper_bound, psi0_abs_bound] # Rc ≤ 20, scale ≤ 100
 
@@ -297,11 +299,11 @@ def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_
     if Rc_opt > Rc_max: #km
         # Initial guesses: Rc=10, psi0=1
         if cyc == 'CE':
-            params_init = [5.0, -30.0]
+            params_init = [Rc_init, -psi0_init]
             bounds_lower = [1e-6, -psi0_abs_bound]   # Rc ≥ 1, scale ≥ 0.01
             bounds_upper = [Rc_upper_bound, -1e-6] # Rc ≤ 20, scale ≤ 100
         elif cyc == 'AE':
-            params_init = [5.0, 30.0]
+            params_init = [Rc_init, psi0_init]
             bounds_lower = [1e-6, 1e-6]   # Rc ≥ 1, scale ≥ 0.01
             bounds_upper = [Rc_upper_bound, psi0_abs_bound] # Rc ≤ 20, scale ≤ 100
     
@@ -313,10 +315,7 @@ def espra_Rc(xi, yi, ui, vi, x0, y0, Q11, Q12, Q22, Rc_upper_bound=np.inf, psi0_
     
     return Rc_opt, psi0_opt
 
-
 def gaussian_vel_reconstruction(x0, y0, Q11, Q12, Q22, Rc, psi0, X=None, Y=None):
-
-    # q11, q22 = np.abs(q11), np.abs(q22)
 
     q11 = - psi0 / Rc**2 * Q11
     q12 = - psi0 / Rc**2 * Q12
@@ -468,18 +467,65 @@ def plot_isosurface(ax, Xn, Yn, zn, Un, Vn, level=-0.2, elev=13, azim=135, flag=
     ax.set_zlabel('Depth (km)')
     ax.view_init(elev=elev, azim=azim)
 
+# def smooth(x, y, num=1000, window=100):
+#     from scipy.interpolate import interp1d
+#     from scipy.ndimage import uniform_filter1d
+#     x = np.asarray(x); y = np.asarray(y)
+#     # Step 1: interpolate to uniform y
+#     y_uniform = np.linspace(y.min(), y.max(), num)
+#     f_interp = interp1d(y, x, kind='linear', fill_value='extrapolate')
+#     x_uniform = f_interp(y_uniform)
+#     # Step 2: smooth x on the uniform y grid
+#     x_smooth_uniform = uniform_filter1d(x_uniform, size=window)
+#     # Step 3: interpolate back to original y
+#     f_smooth = interp1d(y_uniform, x_smooth_uniform, kind='linear', fill_value='extrapolate')
+#     x_smooth = f_smooth(y)
+
+#     return x_smooth
+
 def smooth(x, y, num=1000, window=100):
+
     from scipy.interpolate import interp1d
-    from scipy.ndimage import uniform_filter1d
-    x = np.asarray(x); y = np.asarray(y)
-    # Step 1: interpolate to uniform y
+    """
+    Smooth x vs y by:
+      1) interpolating onto a uniform y-grid
+      2) applying a running nan‑mean of width `window`
+      3) interpolating back to the original y
+
+    Any output point whose window contains only NaNs will be NaN.
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+
+    # 1) uniform y grid & interpolation
     y_uniform = np.linspace(y.min(), y.max(), num)
     f_interp = interp1d(y, x, kind='linear', fill_value='extrapolate')
     x_uniform = f_interp(y_uniform)
-    # Step 2: smooth x on the uniform y grid
-    x_smooth_uniform = uniform_filter1d(x_uniform, size=window)
-    # Step 3: interpolate back to original y
-    f_smooth = interp1d(y_uniform, x_smooth_uniform, kind='linear', fill_value='extrapolate')
+
+    # 2) running nan-mean on the uniform grid
+    def moving_nanmean(a, win):
+        """Return an array the same size as a, where each point is the mean of
+        the surrounding win points (including itself), ignoring NaNs."""
+        valid = ~np.isnan(a)
+        # fill NaNs with zero so they don't contribute to sum
+        a_fill = np.where(valid, a, 0.0)
+        # convolution kernels
+        kernel = np.ones(win, dtype=float)
+        # sums of valid data
+        sums   = np.convolve(a_fill, kernel, mode='same')
+        # counts of valid entries
+        counts = np.convolve(valid.astype(float), kernel, mode='same')
+        # compute mean; outside domain or where counts==0 gives NaN
+        with np.errstate(divide='ignore', invalid='ignore'):
+            mu = sums / counts
+        mu[counts == 0] = np.nan
+        return mu
+
+    x_smooth_uniform = moving_nanmean(x_uniform, window)
+
+    # 3) back to original y
+    f_smooth = interp1d(y_uniform, x_smooth_uniform,
+                        kind='linear', fill_value='extrapolate')
     x_smooth = f_smooth(y)
 
     return x_smooth
@@ -488,9 +534,56 @@ def smooth(x, y, num=1000, window=100):
 
 
 
+def estimate_psi0(x, y, u, v, xc, yc, Q11, Q12, Q22):
+    from scipy.optimize import minimize_scalar
+    """Least‑squares estimate of ψ0 given core Q_ij and observed (u,v)."""
+
+    sign_guess = -np.sign(Q11)        # + AE, - CE
+    guess     = sign_guess * .1      # magnitude ≈ 100 in your units
+    bounds    = (1e-3, 1e6) if sign_guess > 0 else (-1e6, -1e-3)
+
+    # shifts and handy algebra
+    dx, dy   = x - xc, y - yc
+    Phi      = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
+    dPhi_dx  = 2*Q11*dx + 2*Q12*dy
+    dPhi_dy  = 2*Q12*dx + 2*Q22*dy
+
+    mask     = ~np.isnan(u) & ~np.isnan(v)
+
+    def residual(psi0):
+        e  = np.exp(Phi[mask] / psi0)
+        um = -e * dPhi_dy[mask]
+        vm =  e * dPhi_dx[mask]
+        return np.mean((u[mask]-um)**2 + (v[mask]-vm)**2)
+
+    res = minimize_scalar(residual, method='bounded',
+                          bounds=bounds, options={'xatol':1e-8})
+
+    psi0 = res.x
+    if np.abs(psi0) > .9 * np.max(np.abs(bounds)):
+        psi0 = np.nan
+
+    return psi0 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
 
 
 
