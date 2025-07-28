@@ -138,10 +138,19 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     
 
 
-def moca(l, VT, VN, Rc_init=2.0, psi0_init=.1):
+def moca(l, VT, VN, Rc_init=4.0, psi0_init=200.0):
 
     if np.any(np.isnan(VT)):
-        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
+        return (
+            np.nan,
+            np.nan,  
+            np.nan,  
+            nan2,  
+            np.nan,  
+            np.nan,
+            nan2     
+        )
     
     def find_root(x, y):
         coeffs = np.polyfit(x, y, 3)
@@ -174,19 +183,33 @@ def moca(l, VT, VN, Rc_init=2.0, psi0_init=.1):
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     xc, yc = l0, r0
 
-    psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
-    q11_init = -Rc_init**2/psi0 * Q11
-    q12_init = -Rc_init**2/psi0 * Q12
-    q22_init = -Rc_init**2/psi0 * Q22
-    Rc = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
-                     q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
-    
-    return l0, r0, w, Q, Rc, psi0
+    # psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
+    # q11_init = -Rc_init**2/psi0 * Q11
+    # q12_init = -Rc_init**2/psi0 * Q12
+    # q22_init = -Rc_init**2/psi0 * Q22
+    # Rc, q = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
+    #                  q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
 
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=2.0, psi0_init=.1):
+    s_init = - Rc_init**2 / psi0_init
+    params = fit_eddy(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], p0=(s_init, Rc_init, psi0_init))
+    Rc, psi0, q11, q12, q22 = params['Rc'], params['psi0'], params['q11'], params['q12'], params['q22']
+    q = np.array([[q11, q12], [q12, q22]])
+    
+    return l0, r0, w, Q, Rc, psi0, q
+
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=4.0, psi0_init=200.0):
 
     if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
-        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
+        return (
+            np.nan, 
+            np.nan,
+            np.nan,   
+            nan2, 
+            np.nan,   
+            np.nan, 
+            nan2     
+        )
     
     def find_root(x, y, degree=3):
         """Fit a degree-3 polynomial to (x, y) and return the real root closest to x's midpoint."""
@@ -210,7 +233,16 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=2.0, psi0_init=.1):
     
     if len(common_points) != 1:
         print(f"Warning: Expected 1 common point, found {len(common_points)}.")
-        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
+        return (
+            np.nan, 
+            np.nan,
+            np.nan,   
+            nan2, 
+            np.nan,   
+            np.nan, 
+            nan2 
+        )
     
     center_x, center_y = next(iter(common_points))
 
@@ -255,19 +287,33 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=2.0, psi0_init=.1):
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
 
-    psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
-    q11_init = -Rc_init**2/psi0 * Q11
-    q12_init = -Rc_init**2/psi0 * Q12
-    q22_init = -Rc_init**2/psi0 * Q22
-    Rc = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
-                     q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
+    # psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
+    # q11_init = -Rc_init**2/psi0 * Q11
+    # q12_init = -Rc_init**2/psi0 * Q12
+    # q22_init = -Rc_init**2/psi0 * Q22
+    # Rc, q = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
+    #                  q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
 
-    return xc, yc, w, Q, Rc, psi0
+    s_init = - Rc_init**2 / psi0_init
+    params = fit_eddy(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], p0=(s_init, Rc_init, psi0_init))
+    Rc, psi0, q11, q12, q22 = params['Rc'], params['psi0'], params['q11'], params['q12'], params['q22']
+    q = np.array([[q11, q12], [q12, q22]])
 
-def espra(xi, yi, ui, vi, Rc_init=2.0, psi0_init=.1):
+    return xc, yc, w, Q, Rc, psi0, q
+
+def espra(xi, yi, ui, vi, Rc_init=4.0, psi0_init=200.0):
 
     if np.any(np.isnan(ui)):
-        return np.nan, np.nan, np.nan, np.array([[np.nan, np.nan], [np.nan, np.nan]]), np.nan, np.nan
+        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
+        return (
+            np.nan, 
+            np.nan,
+            np.nan,   
+            nan2, 
+            np.nan,   
+            np.nan, 
+            nan2 
+        )
     
     from scipy.optimize import least_squares
 
@@ -290,202 +336,119 @@ def espra(xi, yi, ui, vi, Rc_init=2.0, psi0_init=.1):
 
     Q = np.array([[Q11, Q12], [Q12, Q22]])
 
-    psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
-    q11_init = -Rc_init**2/psi0 * Q11
-    q12_init = -Rc_init**2/psi0 * Q12
-    q22_init = -Rc_init**2/psi0 * Q22
-    Rc = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
-                     q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
-    
-    return xc, yc, w, Q, Rc, psi0 
+    # psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
+    # q11_init = -Rc_init**2/psi0 * Q11
+    # q12_init = -Rc_init**2/psi0 * Q12
+    # q22_init = -Rc_init**2/psi0 * Q22
+    # Rc, q = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
+    #                  q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
 
-def estimate_psi0(x, y, u, v, xc, yc, Q11, Q12, Q22, psi0_init=.1):
-    from scipy.optimize import minimize_scalar
-    """Least‑squares estimate of ψ0 given core Q_ij and observed (u,v)."""
-    x = np.array(x) if isinstance(x, list) else x
-    y = np.array(y) if isinstance(y, list) else y
-    u = np.array(u) if isinstance(u, list) else u
-    v = np.array(v) if isinstance(v, list) else v
+    s_init = - Rc_init**2 / psi0_init
+    params = fit_eddy(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], p0=(s_init, Rc_init, psi0_init))
+    Rc, psi0, q11, q12, q22 = params['Rc'], params['psi0'], params['q11'], params['q12'], params['q22']
+    q = np.array([[q11, q12], [q12, q22]])
 
-    sign_guess = -np.sign(Q11)        # + AE, - CE
-    guess     = sign_guess * psi0_init      # magnitude ≈ 100 in your units
-    bounds    = (1e-3, 1e6) if sign_guess > 0 else (-1e6, -1e-3)
+    return xc, yc, w, Q, Rc, psi0, q
 
-    # shifts and handy algebra
-    dx, dy   = x - xc, y - yc
-    Phi      = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
-    dPhi_dx  = 2*Q11*dx + 2*Q12*dy
-    dPhi_dy  = 2*Q12*dx + 2*Q22*dy
-
-    mask     = ~np.isnan(u) & ~np.isnan(v)
-
-    def residual(psi0):
-        e  = np.exp(Phi[mask] / psi0)
-        um = -e * dPhi_dy[mask]
-        vm =  e * dPhi_dx[mask]        
-        return np.mean((u[mask]-um)**2 + (v[mask]-vm)**2)
-
-    res = minimize_scalar(residual, method='bounded',
-                          bounds=bounds, options={'xatol':1e-8})
-
-    psi0 = res.x
-    if np.abs(psi0) > .9 * np.max(np.abs(bounds)):
-        psi0 = np.nan
-
-    return psi0 
-
-def estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, q11_init=1.0, q12_init=0.0, q22_init=1.0, Rc_init=2):
-
+def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22, p0=(1,1,1)):
     from scipy.optimize import least_squares
-    if np.any(np.isnan(ui)):
-        return np.nan
-
-    def residuals(params, x, y, u_i, v_i, xc, yc, psi0):
-        q11, q12, q22, Rc = params
-        dx, dy = x - xc, y - yc
-        rho   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-        rho_x = 2*q11*dx   + 2*q12*dy
-        rho_y = 2*q12*dx   + 2*q22*dy
-        exp_t = np.exp(-rho/Rc**2)
-        u_pred = -psi0/Rc**2 * rho_y * exp_t
-        v_pred =  psi0/Rc**2 * rho_x * exp_t
-        return np.concatenate([u_pred - u_i, v_pred - v_i])
-
-    # initial guesses + non‐negative bounds on q11,q22,Rc
-    x0 = [q11_init, q12_init, q22_init, Rc_init]
-    lb = [-np.inf,  -np.inf,   -np.inf,     1e-6]
-    ub = [ np.inf,   np.inf,    np.inf,   np.inf]
-
-    try:
-        res = least_squares(
-            residuals,
-            x0,
-            bounds=(lb, ub),
-            args=(xi, yi, ui, vi, xc, yc, psi0)
-        )
-    except ValueError as e:
-        if "`x0` is infeasible" in str(e):
-            return np.nan
-        else:
-            raise  # re-raise other ValueErrors
-    
-    q11, q12, q22, Rc = res.x
-    return Rc
-    
+    def residuals(p):
+        s, Rc, psi0 = p
+        q11, q12, q22 = s*Q11, s*Q12, s*Q22
+        dx, dy = xi-xc, yi-yc
+        rho      = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+        rho_x    = 2*q11*dx   + 2*q12*dy
+        rho_y    = 2*q12*dx   + 2*q22*dy
+        exp_t    = np.exp(-rho/Rc**2)
+        u_pred   =  psi0/Rc**2 * rho_y * exp_t
+        v_pred   = -psi0/Rc**2 * rho_x * exp_t
+        return np.concatenate((u_pred-ui, v_pred-vi))
+    res = least_squares(residuals, p0)
+    s_opt, Rc_opt, psi0_opt = res.x
+    return {
+      'q11': s_opt*Q11,
+      'q12': s_opt*Q12,
+      'q22': s_opt*Q22,
+      'Rc':  Rc_opt,
+      'psi0': psi0_opt,
+      's': s_opt
+    }
 
 
-# def estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, Q):
-#     Q11, Q12, Q22 = Q[0,0], Q[1,0], Q[1,1]
-    
+# def estimate_psi0(x, y, u, v, xc, yc, Q11, Q12, Q22, psi0_init=200):
+#     from scipy.optimize import minimize_scalar
+#     """Least‑squares estimate of ψ0 given core Q_ij and observed (u,v)."""
+#     x = np.array(x) if isinstance(x, list) else x
+#     y = np.array(y) if isinstance(y, list) else y
+#     u = np.array(u) if isinstance(u, list) else u
+#     v = np.array(v) if isinstance(v, list) else v
+
+#     sign_guess = -np.sign(Q11)        # + AE, - CE
+#     guess     = sign_guess * psi0_init      # magnitude ≈ 100 in your units
+#     bounds    = (1e-3, 1e6) if sign_guess > 0 else (-1e6, -1e-3)
+
+#     # shifts and handy algebra
+#     dx, dy   = x - xc, y - yc
+#     Phi      = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
+#     dPhi_dx  = 2*Q11*dx + 2*Q12*dy
+#     dPhi_dy  = 2*Q12*dx + 2*Q22*dy
+
+#     mask     = ~np.isnan(u) & ~np.isnan(v)
+
+#     def residual(psi0):
+#         e  = np.exp(Phi[mask] / psi0)
+#         um = e * dPhi_dy[mask]
+#         vm = -e * dPhi_dx[mask]        
+#         return np.mean((u[mask]-um)**2 + (v[mask]-vm)**2)
+
+#     res = minimize_scalar(residual, method='bounded',
+#                           bounds=bounds, options={'xatol':1e-8})
+
+#     psi0 = res.x
+#     if np.abs(psi0) > .9 * np.max(np.abs(bounds)):
+#         psi0 = np.nan
+
+#     return psi0 
+
+# def estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, q11_init=1.0, q12_init=0.0, q22_init=1.0, Rc_init=2):
+
 #     from scipy.optimize import least_squares
 #     if np.any(np.isnan(ui)):
 #         return np.nan
 
-#     def residuals(params, x, y, u_obs, v_obs, xc, yc, psi0, Q11, Q12, Q22):
-#         s, Rc = params
-#         # enforce ratio
-#         q11, q12, q22 = s*Q11, s*Q12, s*Q22
-
+#     def residuals(params, x, y, u_i, v_i, xc, yc, psi0):
+#         q11, q12, q22, Rc = params
 #         dx, dy = x - xc, y - yc
 #         rho   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
 #         rho_x = 2*q11*dx   + 2*q12*dy
 #         rho_y = 2*q12*dx   + 2*q22*dy
-
 #         exp_t = np.exp(-rho/Rc**2)
-#         u_pred = -psi0/Rc**2 * rho_y * exp_t
-#         v_pred =  psi0/Rc**2 * rho_x * exp_t
+#         u_pred =  psi0/Rc**2 * rho_y * exp_t
+#         v_pred = -psi0/Rc**2 * rho_x * exp_t
+#         return np.concatenate([u_pred - u_i, v_pred - v_i])
 
-#         return np.concatenate([u_pred - u_obs, v_pred - v_obs])
+#     # initial guesses + non‐negative bounds on q11,q22,Rc
+#     x0 = [q11_init, q12_init, q22_init, Rc_init]
+#     lb = [-np.inf,  -np.inf,   -np.inf,     1e-6]
+#     ub = [ np.inf,   np.inf,    np.inf,   np.inf]
 
-#     # initial guess: s≈1, Rc≈2 ; enforce positivity
-#     x0 = [1.0, 2.0]
-#     lb = [0.0, 0.0]
-#     ub = [np.inf, np.inf]
-
-#     res = least_squares(
-#         residuals,
-#         x0,
-#         bounds=(lb, ub),
-#         args=(xi, yi, ui, vi, xc, yc, psi0, Q11, Q12, Q22)
-#     )
-
-#     s_fit, Rc = res.x
- 
-#     return Rc
-
-
-# def estimate_Rc(x, y, u, v, xc, yc, Q, bins=60):
-#     from scipy.signal import argrelmax          # local maxima (for the peak)
-#     from numpy.linalg import eigh, norm
-#     """
-#     Estimate Rc (= sqrt(2) * radius of max tangential speed)
-#     for an *eccentric* Gaussian eddy, given the core matrix Q_ij.
-
-#     Parameters
-#     ----------
-#     x, y, u, v : 1‑D arrays
-#         Positions and velocity components (same length, NaNs allowed).
-#     xc, yc     : float
-#         Eddy centre already estimated.
-#     Q11, Q12, Q22 : float
-#         Elements of the 2×2 symmetric core matrix Q.
-#     bins       : int, optional
-#         Number of radius bins for smoothing the tangential‑speed profile.
-
-#     Returns
-#     -------
-#     Rc : float
-#         Estimated core e‑folding radius.
-#     """
-
-#     # ---------- 1.  build a *positive‑definite* metric matrix -------------
-#     #  If Q is negative‑definite (common when ψ₀>0), flip its sign
-#     lam, V = eigh(Q)                 # eigen‑decomp (lam ascending)
-#     if np.all(lam < 0):
-#         Q = -Q
-#         lam = -lam                   # now positive
-
-#     # ---------- 2.  linear transform x' = L·(x‑xc) so that ρ = |x'| -------
-#     L = np.diag(np.sqrt(lam)) @ V.T  # 2×2 matrix with LᵀL = Q
-
-#     # centred coordinates
-#     DX  = np.vstack((x - xc, y - yc))        # shape (2, N)
-#     Xp  = L @ DX                             # transformed coords
-#     r   = norm(Xp, axis=0)                   # elliptical radius ρ
-
-#     # ---------- 3.  rotate velocities the same way ------------------------
-#     VEL = np.vstack((u, v))                  # (2, N)
-#     Vp  = L @ VEL                            # transformed velocities
-
-#     # tangential component in transformed frame
-#     theta = np.arctan2(Xp[1], Xp[0])
-#     vt    = -Vp[0] * np.sin(theta) + Vp[1] * np.cos(theta)
-
-#     good  = ~np.isnan(vt)
-#     r, vt = r[good], vt[good]
-
-#     if len(r) == 0:
-#         return np.nan
-
-#     # ---------- 4.  smooth vt(r) with bin averages ------------------------
-#     r_bins  = np.linspace(r.min(), r.max(), bins + 1)
-#     idx     = np.digitize(r, r_bins) - 1
-#     counts  = np.bincount(idx, minlength=bins)
-#     vt_sum  = np.bincount(idx, weights=vt, minlength=bins)
-#     vt_mean = vt_sum / np.maximum(1, counts)
-#     r_mid   = 0.5 * (r_bins[:-1] + r_bins[1:])
-
-#     # ---------- 5.  locate radius where |vt| peaks -----------------------
-#     peak_idx = argrelmax(np.abs(vt_mean))[0]
-#     if peak_idx.size == 0:
-#         return np.nan # "No clear peak detected in tangential speed."
-
-#     # pick the highest peak (in case of noise wiggles)
-#     best     = peak_idx[np.argmax(np.abs(vt_mean[peak_idx]))]
-#     r_max    = r_mid[best]
-
-#     # ---------- 6.  Rc = √2 · r_max --------------------------------------
-#     return np.sqrt(2) * r_max
+#     try:
+#         res = least_squares(
+#             residuals,
+#             x0,
+#             bounds=(lb, ub),
+#             args=(xi, yi, ui, vi, xc, yc, psi0)
+#         )
+#     except ValueError as e:
+#         # if "`x0` is infeasible" in str(e):
+#         return np.nan, np.array([[np.nan, np.nan],
+#                                  [np.nan, np.nan]])
+#         # else:
+#         #     raise  # re-raise other ValueErrors
+    
+#     q11, q12, q22, Rc = res.x
+#     q = np.array([[q11, q12], [q12, q22]])
+#     return Rc, q
 
 
 
@@ -506,33 +469,61 @@ def estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, q11_init=1.0, q12_init=0.0, q22_in
 
 
 
-def gaussian_vel_reconstruction(x0, y0, Q11, Q12, Q22, Rc, psi0, X=None, Y=None): # MAYBE USE q terms instead of Q terms !!!
 
-    q11 = - Rc**2 / psi0 * Q11
-    q12 = - Rc**2 / psi0 * Q12
-    q22 = - Rc**2 / psi0 * Q22
+
+
+
+
+def gaussian_vel_reconstruction(xc, yc, q11, q12, q22, Rc, psi0, X=None, Y=None):
 
     if X is None:
         width = 200
-        x = np.linspace(x0-width, x0+width, 51)
-        y = np.linspace(y0-width, y0+width, 51)
+        x = np.linspace(xc-width, xc+width, 51)
+        y = np.linspace(yc-width, yc+width, 51)
         X, Y = np.meshgrid(x, y)
-    
-    dx, dy = X - x0, Y - y0
-    
-    phi   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-    phi_x = 2*q11*dx  + 2*q12*dy
-    phi_y = 2*q22*dy  + 2*q12*dx
-    
-    # 5) build Gaussian streamfunction with that R
-    exp_term = np.exp(-phi / Rc**2)
-    psi_x = -phi_x / Rc**2 * exp_term
-    psi_y = -phi_y / Rc**2 * exp_term
-    
-    u = -psi_y * psi0
-    v =  psi_x * psi0
+
+    dx, dy = X-xc, Y-yc
+    rho      = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+    rho_x    = 2*q11*dx   + 2*q12*dy
+    rho_y    = 2*q12*dx   + 2*q22*dy
+    exp_t    = np.exp(-rho/Rc**2)
+    u   =  psi0/Rc**2 * rho_y * exp_t
+    v   = -psi0/Rc**2 * rho_x * exp_t
 
     return u, v, X, Y
+
+# def gaussian_vel_reconstruction(x0, y0, Q11, Q12, Q22, Rc, psi0, X=None, Y=None, flag=True): 
+
+#     if flag:
+#         s = - Rc**2 / psi0
+#     else:
+#         s = 1
+    
+#     q11 = s * Q11
+#     q12 = s * Q12
+#     q22 = s * Q22
+
+#     if X is None:
+#         width = 200
+#         x = np.linspace(x0-width, x0+width, 51)
+#         y = np.linspace(y0-width, y0+width, 51)
+#         X, Y = np.meshgrid(x, y)
+    
+#     dx, dy = X - x0, Y - y0
+    
+#     phi   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+#     phi_x = 2*q11*dx  + 2*q12*dy
+#     phi_y = 2*q22*dy  + 2*q12*dx
+    
+#     # 5) build Gaussian streamfunction with that R
+#     exp_term = np.exp(-phi / Rc**2)
+#     psi_x = -phi_x / Rc**2 * exp_term
+#     psi_y = -phi_y / Rc**2 * exp_term
+    
+#     u =  psi_y * psi0
+#     v = -psi_x * psi0
+
+#     return u, v, X, Y
 
 from scipy.sparse import diags, eye, kron, csr_matrix
 from scipy.sparse.linalg import spsolve
@@ -710,6 +701,8 @@ def normalize_matrix(matrix, mask_value=np.nan):
     valid_mean = np.nansum(matrix) / np.sum(valid_mask)
     valid_std = np.sqrt(np.nansum(valid_mask * (matrix - valid_mean) ** 2) / np.sum(valid_mask))
     return (matrix - valid_mean) / valid_std
+
+
 
 
 
