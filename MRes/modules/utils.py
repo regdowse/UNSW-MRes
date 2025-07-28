@@ -350,29 +350,74 @@ def espra(xi, yi, ui, vi, Rc_init=4.0, psi0_init=200.0):
 
     return xc, yc, w, Q, Rc, psi0, q
 
-def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22, p0=(1,1,1)):
-    from scipy.optimize import least_squares
-    def residuals(p):
-        s, Rc, psi0 = p
-        q11, q12, q22 = s*Q11, s*Q12, s*Q22
-        dx, dy = xi-xc, yi-yc
-        rho      = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-        rho_x    = 2*q11*dx   + 2*q12*dy
-        rho_y    = 2*q12*dx   + 2*q22*dy
-        exp_t    = np.exp(-rho/Rc**2)
-        u_pred   =  psi0/Rc**2 * rho_y * exp_t
-        v_pred   = -psi0/Rc**2 * rho_x * exp_t
-        return np.concatenate((u_pred-ui, v_pred-vi))
-    res = least_squares(residuals, p0)
-    s_opt, Rc_opt, psi0_opt = res.x
-    return {
-      'q11': s_opt*Q11,
-      'q12': s_opt*Q12,
-      'q22': s_opt*Q22,
-      'Rc':  Rc_opt,
-      'psi0': psi0_opt,
-      's': s_opt
-    }
+# def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22, p0=(1,1,1)):
+#     from scipy.optimize import least_squares
+#     def residuals(p):
+#         s, Rc, psi0 = p
+#         q11, q12, q22 = s*Q11, s*Q12, s*Q22
+#         dx, dy = xi-xc, yi-yc
+#         rho      = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+#         rho_x    = 2*q11*dx   + 2*q12*dy
+#         rho_y    = 2*q12*dx   + 2*q22*dy
+#         exp_t    = np.exp(-rho/Rc**2)
+#         u_pred   =  psi0/Rc**2 * rho_y * exp_t
+#         v_pred   = -psi0/Rc**2 * rho_x * exp_t
+#         return np.concatenate((u_pred-ui, v_pred-vi))
+#     res = least_squares(residuals, p0)
+#     s_opt, Rc_opt, psi0_opt = res.x
+
+#     p0 = (s_opt, Rc_opt, psi0_opt)
+#     res = least_squares(residuals, p0)
+#     s_opt, Rc_opt, psi0_opt = res.x
+    
+#     return {
+#       'q11': s_opt*Q11,
+#       'q12': s_opt*Q12,
+#       'q22': s_opt*Q22,
+#       'Rc':  Rc_opt,
+#       'psi0': psi0_opt,
+#       's': s_opt
+#     }
+
+
+# def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22,
+#              p0=(1.0, 1.0, 1.0),
+#              bounds=None):
+#     from scipy.optimize import least_squares
+#     def residuals(p):
+#         s, Rc, psi0 = p
+#         q11, q12, q22 = s*Q11, s*Q12, s*Q22
+#         dx, dy = xi - xc, yi - yc
+#         rho   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+#         rho_x = 2*q11*dx   + 2*q12*dy
+#         rho_y = 2*q12*dx   + 2*q22*dy
+#         exp_t = np.exp(-rho / Rc**2)
+#         u_pred =  psi0 / Rc**2 * rho_y * exp_t
+#         v_pred = -psi0 / Rc**2 * rho_x * exp_t
+#         return np.concatenate((u_pred - ui, v_pred - vi))
+    
+#     # default bounds: s>0, Rc>0, psi0 free
+#     if bounds is None:
+#         lower = (-np.inf, 1e-6, -np.inf)
+#         upper = (np.inf, np.inf,  np.inf)
+#     else:
+#         lower, upper = bounds
+
+#     res = least_squares(residuals, x0=p0, bounds=(lower, upper))
+#     s_opt, Rc_opt, psi0_opt = res.x
+
+#     return {
+#         'q11': s_opt * Q11,
+#         'q12': s_opt * Q12,
+#         'q22': s_opt * Q22,
+#         's':   s_opt,
+#         'Rc':  Rc_opt,
+#         'psi0': psi0_opt
+#     }
+
+
+
+    
 
 
 # def estimate_psi0(x, y, u, v, xc, yc, Q11, Q12, Q22, psi0_init=200):
@@ -397,8 +442,8 @@ def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22, p0=(1,1,1)):
 
 #     def residual(psi0):
 #         e  = np.exp(Phi[mask] / psi0)
-#         um = e * dPhi_dy[mask]
-#         vm = -e * dPhi_dx[mask]        
+#         um = -e * dPhi_dy[mask]
+#         vm = e * dPhi_dx[mask]        
 #         return np.mean((u[mask]-um)**2 + (v[mask]-vm)**2)
 
 #     res = minimize_scalar(residual, method='bounded',
@@ -453,6 +498,23 @@ def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22, p0=(1,1,1)):
 
 
 
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
+    
 
 
 
