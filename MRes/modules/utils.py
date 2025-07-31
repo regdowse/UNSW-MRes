@@ -183,19 +183,9 @@ def moca(l, VT, VN, Rc_init=4.0, psi0_init=200.0):
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     xc, yc = l0, r0
 
-    # psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
-    # q11_init = -Rc_init**2/psi0 * Q11
-    # q12_init = -Rc_init**2/psi0 * Q12
-    # q22_init = -Rc_init**2/psi0 * Q22
-    # Rc, q = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
-    #                  q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
+    Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
 
-    s_init = - Rc_init**2 / psi0_init
-    params = fit_eddy(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], p0=(s_init, Rc_init, psi0_init))
-    Rc, psi0, q11, q12, q22 = params['Rc'], params['psi0'], params['q11'], params['q12'], params['q22']
-    q = np.array([[q11, q12], [q12, q22]])
-    
-    return l0, r0, w, Q, Rc, psi0, q
+    return l0, r0, w, Q, Rc, psi0
 
 def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=4.0, psi0_init=200.0):
 
@@ -208,7 +198,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=4.0, psi0_init=200.0):
             nan2, 
             np.nan,   
             np.nan, 
-            nan2     
+            # nan2     
         )
     
     def find_root(x, y, degree=3):
@@ -241,7 +231,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=4.0, psi0_init=200.0):
             nan2, 
             np.nan,   
             np.nan, 
-            nan2 
+            # nan2 
         )
     
     center_x, center_y = next(iter(common_points))
@@ -287,19 +277,9 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=4.0, psi0_init=200.0):
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
 
-    # psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
-    # q11_init = -Rc_init**2/psi0 * Q11
-    # q12_init = -Rc_init**2/psi0 * Q12
-    # q22_init = -Rc_init**2/psi0 * Q22
-    # Rc, q = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
-    #                  q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
+    Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
 
-    s_init = - Rc_init**2 / psi0_init
-    params = fit_eddy(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], p0=(s_init, Rc_init, psi0_init))
-    Rc, psi0, q11, q12, q22 = params['Rc'], params['psi0'], params['q11'], params['q12'], params['q22']
-    q = np.array([[q11, q12], [q12, q22]])
-
-    return xc, yc, w, Q, Rc, psi0, q
+    return xc, yc, w, Q, Rc, psi0
 
 def espra(xi, yi, ui, vi, Rc_init=4.0, psi0_init=200.0):
 
@@ -336,170 +316,218 @@ def espra(xi, yi, ui, vi, Rc_init=4.0, psi0_init=200.0):
 
     Q = np.array([[Q11, Q12], [Q12, Q22]])
 
-    # psi0 = estimate_psi0(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], psi0_init=psi0_init)
-    # q11_init = -Rc_init**2/psi0 * Q11
-    # q12_init = -Rc_init**2/psi0 * Q12
-    # q22_init = -Rc_init**2/psi0 * Q22
-    # Rc, q = estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, 
-    #                  q11_init=q11_init, q12_init=q12_init, q22_init=q22_init)
+    Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
 
-    s_init = - Rc_init**2 / psi0_init
-    params = fit_eddy(xi, yi, ui, vi, xc, yc, Q[0,0], Q[1,0], Q[1,1], p0=(s_init, Rc_init, psi0_init))
-    Rc, psi0, q11, q12, q22 = params['Rc'], params['psi0'], params['q11'], params['q12'], params['q22']
-    q = np.array([[q11, q12], [q12, q22]])
+    return xc, yc, w, Q, Rc, psi0
 
-    return xc, yc, w, Q, Rc, psi0, q
+def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
+    from scipy.optimize import curve_fit
+    # ensure numpy arrays (not pandas Series)
+    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
 
-# def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22, p0=(1,1,1)):
-#     from scipy.optimize import least_squares
-#     def residuals(p):
-#         s, Rc, psi0 = p
-#         q11, q12, q22 = s*Q11, s*Q12, s*Q22
-#         dx, dy = xi-xc, yi-yc
-#         rho      = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-#         rho_x    = 2*q11*dx   + 2*q12*dy
-#         rho_y    = 2*q12*dx   + 2*q22*dy
-#         exp_t    = np.exp(-rho/Rc**2)
-#         u_pred   =  psi0/Rc**2 * rho_y * exp_t
-#         v_pred   = -psi0/Rc**2 * rho_x * exp_t
-#         return np.concatenate((u_pred-ui, v_pred-vi))
-#     res = least_squares(residuals, p0)
-#     s_opt, Rc_opt, psi0_opt = res.x
+    # compute radii and tangential speed
+    dx, dy = xi - xc, yi - yc
+    r = np.hypot(dx, dy)
+    v = np.zeros_like(r)
+    mask = r > 0
+    v[mask] = np.abs((-ui[mask]*dy[mask] + vi[mask]*dx[mask]) / r[mask])
 
-#     p0 = (s_opt, Rc_opt, psi0_opt)
-#     res = least_squares(residuals, p0)
-#     s_opt, Rc_opt, psi0_opt = res.x
-    
-#     return {
-#       'q11': s_opt*Q11,
-#       'q12': s_opt*Q12,
-#       'q22': s_opt*Q22,
-#       'Rc':  Rc_opt,
-#       'psi0': psi0_opt,
-#       's': s_opt
-#     }
+    # “peak” initial guess
+    i_peak = np.nanargmax(v)
+    Rc0   = np.sqrt(2) * r[i_peak]
+    psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
+
+    # fit model, return NaNs if it fails
+    try:
+        popt, _ = curve_fit(
+            lambda rr, ψ0, Rc: 2*ψ0/Rc**2 * rr * np.exp(-rr**2/Rc**2),
+            r, v,
+            p0=[psi0_0, Rc0],
+            bounds=(0, np.inf)
+        )
+        ψ0_opt, Rc_opt = popt
+        return Rc_opt, ψ0_opt
+    except Exception:
+        return np.nan, np.nan
 
 
-# def fit_eddy(xi, yi, ui, vi, xc, yc, Q11, Q12, Q22,
-#              p0=(1.0, 1.0, 1.0),
-#              bounds=None):
-#     from scipy.optimize import least_squares
-#     def residuals(p):
-#         s, Rc, psi0 = p
-#         q11, q12, q22 = s*Q11, s*Q12, s*Q22
-#         dx, dy = xi - xc, yi - yc
-#         rho   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-#         rho_x = 2*q11*dx   + 2*q12*dy
-#         rho_y = 2*q12*dx   + 2*q22*dy
-#         exp_t = np.exp(-rho / Rc**2)
-#         u_pred =  psi0 / Rc**2 * rho_y * exp_t
-#         v_pred = -psi0 / Rc**2 * rho_x * exp_t
-#         return np.concatenate((u_pred - ui, v_pred - vi))
-    
-#     # default bounds: s>0, Rc>0, psi0 free
-#     if bounds is None:
-#         lower = (-np.inf, 1e-6, -np.inf)
-#         upper = (np.inf, np.inf,  np.inf)
-#     else:
-#         lower, upper = bounds
 
-#     res = least_squares(residuals, x0=p0, bounds=(lower, upper))
-#     s_opt, Rc_opt, psi0_opt = res.x
 
-#     return {
-#         'q11': s_opt * Q11,
-#         'q12': s_opt * Q12,
-#         'q22': s_opt * Q22,
-#         's':   s_opt,
-#         'Rc':  Rc_opt,
-#         'psi0': psi0_opt
-#     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
     
 
 
-# def estimate_psi0(x, y, u, v, xc, yc, Q11, Q12, Q22, psi0_init=200):
-#     from scipy.optimize import minimize_scalar
-#     """Least‑squares estimate of ψ0 given core Q_ij and observed (u,v)."""
-#     x = np.array(x) if isinstance(x, list) else x
-#     y = np.array(y) if isinstance(y, list) else y
-#     u = np.array(u) if isinstance(u, list) else u
-#     v = np.array(v) if isinstance(v, list) else v
+import numpy as np
+from scipy.optimize import least_squares
 
-#     sign_guess = -np.sign(Q11)        # + AE, - CE
-#     guess     = sign_guess * psi0_init      # magnitude ≈ 100 in your units
-#     bounds    = (1e-3, 1e6) if sign_guess > 0 else (-1e6, -1e-3)
-
-#     # shifts and handy algebra
-#     dx, dy   = x - xc, y - yc
-#     Phi      = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
-#     dPhi_dx  = 2*Q11*dx + 2*Q12*dy
-#     dPhi_dy  = 2*Q12*dx + 2*Q22*dy
-
-#     mask     = ~np.isnan(u) & ~np.isnan(v)
-
-#     def residual(psi0):
-#         e  = np.exp(Phi[mask] / psi0)
-#         um = -e * dPhi_dy[mask]
-#         vm = e * dPhi_dx[mask]        
-#         return np.mean((u[mask]-um)**2 + (v[mask]-vm)**2)
-
-#     res = minimize_scalar(residual, method='bounded',
-#                           bounds=bounds, options={'xatol':1e-8})
-
-#     psi0 = res.x
-#     if np.abs(psi0) > .9 * np.max(np.abs(bounds)):
-#         psi0 = np.nan
-
-#     return psi0 
-
-# def estimate_Rc(xi, yi, ui, vi, xc, yc, psi0, q11_init=1.0, q12_init=0.0, q22_init=1.0, Rc_init=2):
-
-#     from scipy.optimize import least_squares
-#     if np.any(np.isnan(ui)):
-#         return np.nan
-
-#     def residuals(params, x, y, u_i, v_i, xc, yc, psi0):
-#         q11, q12, q22, Rc = params
-#         dx, dy = x - xc, y - yc
-#         rho   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-#         rho_x = 2*q11*dx   + 2*q12*dy
-#         rho_y = 2*q12*dx   + 2*q22*dy
-#         exp_t = np.exp(-rho/Rc**2)
-#         u_pred =  psi0/Rc**2 * rho_y * exp_t
-#         v_pred = -psi0/Rc**2 * rho_x * exp_t
-#         return np.concatenate([u_pred - u_i, v_pred - v_i])
-
-#     # initial guesses + non‐negative bounds on q11,q22,Rc
-#     x0 = [q11_init, q12_init, q22_init, Rc_init]
-#     lb = [-np.inf,  -np.inf,   -np.inf,     1e-6]
-#     ub = [ np.inf,   np.inf,    np.inf,   np.inf]
-
-#     try:
-#         res = least_squares(
-#             residuals,
-#             x0,
-#             bounds=(lb, ub),
-#             args=(xi, yi, ui, vi, xc, yc, psi0)
-#         )
-#     except ValueError as e:
-#         # if "`x0` is infeasible" in str(e):
-#         return np.nan, np.array([[np.nan, np.nan],
-#                                  [np.nan, np.nan]])
-#         # else:
-#         #     raise  # re-raise other ValueErrors
+def fit_eddy_profile(xi, yi, ui, vi, xc, yc, Q,
+                     p0=(1.0, 1.0), bounds=None, tol=1e-8):
+    """
+    Fit the full radial velocity profile of a Gaussian eddy to recover Rc and psi0.
     
-#     q11, q12, q22, Rc = res.x
-#     q = np.array([[q11, q12], [q12, q22]])
-#     return Rc, q
+    Parameters
+    ----------
+    xi, yi : array-like
+        Coordinates of measurement points.
+    ui, vi : array-like
+        Observed velocity components.
+    xc, yc : float
+        Eddy centre coordinates.
+    Q : 2x2 array_like
+        Ellipse shape matrix for quadratic form.
+    p0 : tuple, optional
+        Initial guess for (psi0, Rc).
+    bounds : 2-tuple of array-like, optional
+        Bounds on (psi0, Rc): ([psi0_min, Rc_min], [psi0_max, Rc_max]).
+        Default: Rc > tol, psi0 unbounded.
+    tol : float
+        Minimum radius threshold to avoid division by zero.
+    
+    Returns
+    -------
+    Rc_opt : float
+        Fitted decay radius.
+    psi0_opt : float
+        Fitted central streamfunction.
+    """
+    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
+    dx = xi - xc
+    dy = yi - yc
+    # elliptical radius
+    rho2 = Q[0,0]*dx**2 + 2*Q[0,1]*dx*dy + Q[1,1]*dy**2
+    rho = np.sqrt(np.clip(rho2, 0, None))
+    
+    # mask out points too close to centre
+    mask = rho > tol
+    if not np.any(mask):
+        return np.nan, np.nan
+        # raise ValueError("No points with rho > tol; cannot fit profile.")
+    
+    rho_m = rho[mask]
+    ui_m = ui[mask]
+    vi_m = vi[mask]
+    dx_m = dx[mask]
+    dy_m = dy[mask]
+    
+    # tangential velocity
+    r_hat = np.vstack((dx_m, dy_m)) / rho_m
+    theta_hat = np.vstack((-r_hat[1], r_hat[0]))
+    v_theta = theta_hat[0]*ui_m + theta_hat[1]*vi_m
+
+    def residuals(p):
+        psi0, Rc = p
+        v_pred = (psi0 / Rc**2) * rho_m * np.exp(-rho_m**2 / Rc**2)
+        return v_pred - v_theta
+
+    if bounds is None:
+        bounds = ([-np.inf, tol], [np.inf, np.inf])
+
+    res = least_squares(residuals, x0=p0, bounds=bounds)
+    psi0_opt, Rc_opt = res.x
+    return Rc_opt, psi0_opt
 
 
+def compute_Rc_psi0_scattered(xi, yi, ui, vi, xc, yc, Q,
+                              p0=(1.0, 1.0), bounds=None, tol=0.0):
+    from scipy.optimize import least_squares
 
+    """
+    Estimate Rc and psi0 directly from scattered velocity data.
+    
+    Parameters
+    ----------
+    xi, yi : array-like, shape (n,)
+        Coordinates of measurement points.
+    ui, vi : array-like, shape (n,)
+        Observed velocity components.
+    xc, yc : float
+        Eddy centre coordinates.
+    Q : 2x2 array_like
+        Shape matrix defining the quadratic form for elliptical radius.
+    p0 : tuple of float, optional
+        Initial guess for (psi0, Rc).
+    bounds : 2-tuple of array-like, optional
+        Bounds on (psi0, Rc): ([psi0_min, Rc_min], [psi0_max, Rc_max]).
+        Default enforces Rc > tol, psi0 unbounded.
+    tol : float, optional
+        Radius threshold to mask out points too close to centre.
+    
+    Returns
+    -------
+    Rc_opt : float
+        Fitted decay radius.
+    psi0_opt : float
+        Fitted central streamfunction amplitude.
+    """
+    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
+    dx = xi - xc
+    dy = yi - yc
+    # compute elliptical radius
+    rho2 = Q[0,0]*dx**2 + 2*Q[0,1]*dx*dy + Q[1,1]*dy**2
+    rho = np.sqrt(np.clip(rho2, 0, None))
+    
+    # # mask out points too close to the centre
+    # mask = rho > tol
+    # if np.sum(mask) < 3:
+    #     raise ValueError("Need at least 3 valid points (rho > tol) to fit.")
+    # rho_m = rho[mask]
+    # ui_m = ui[mask]
+    # vi_m = vi[mask]
+    # dx_m = dx[mask]
+    # dy_m = dy[mask]
 
+    rho_m = rho
+    ui_m = ui
+    vi_m = vi
+    dx_m = dx
+    dy_m = dy
+    
+    
+    # project velocities onto tangential direction
+    r_hat = np.vstack((dx_m, dy_m)) / rho_m
+    theta_hat = np.vstack((-r_hat[1], r_hat[0]))
+    v_theta = theta_hat[0]*ui_m + theta_hat[1]*vi_m
 
+    # residual function for least-squares: parameters [psi0, Rc]
+    def residuals(p):
+        psi0, Rc = p
+        v_pred = (psi0 / Rc**2) * rho_m * np.exp(-rho_m**2 / Rc**2)
+        return v_pred - v_theta
 
+    # default bounds: psi0 free, Rc > tol
+    if bounds is None:
+        bounds = ([-np.inf, tol], [np.inf, np.inf])
+
+    res = least_squares(residuals, x0=p0, bounds=bounds)
+    psi0_opt, Rc_opt = res.x
+    return Rc_opt, psi0_opt
 
 
 
@@ -764,7 +792,11 @@ def normalize_matrix(matrix, mask_value=np.nan):
     valid_std = np.sqrt(np.nansum(valid_mask * (matrix - valid_mean) ** 2) / np.sum(valid_mask))
     return (matrix - valid_mean) / valid_std
 
-
+def rossby_number(vort, lat_deg):
+    omega = 7.2921e-5  # Earth's rotation rate (rad/s)
+    phi = np.radians(lat_deg)
+    f = np.abs(2 * omega * np.sin(phi))
+    return vort / f
 
 
 
