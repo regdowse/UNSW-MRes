@@ -138,7 +138,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     
 
 
-def moca(l, VT, VN, Rc_init=4.0, psi0_init=200.0):
+def moca(l, VT, VN):
 
     if np.any(np.isnan(VT)):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
@@ -187,7 +187,7 @@ def moca(l, VT, VN, Rc_init=4.0, psi0_init=200.0):
 
     return l0, r0, w, Q, Rc, psi0
 
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=4.0, psi0_init=200.0):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
 
     if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
@@ -281,7 +281,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_init=4.0, psi0_init=200.0):
 
     return xc, yc, w, Q, Rc, psi0
 
-def espra(xi, yi, ui, vi, Rc_init=4.0, psi0_init=200.0):
+def espra(xi, yi, ui, vi):
 
     if np.any(np.isnan(ui)):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
@@ -320,7 +320,8 @@ def espra(xi, yi, ui, vi, Rc_init=4.0, psi0_init=200.0):
 
     return xc, yc, w, Q, Rc, psi0
 
-def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
+def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi, psi0_0=None):
+    
     from scipy.optimize import curve_fit
     # ensure numpy arrays (not pandas Series)
     xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
@@ -335,7 +336,9 @@ def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
     # “peak” initial guess
     i_peak = np.nanargmax(v)
     Rc0   = np.sqrt(2) * r[i_peak]
-    psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
+    if psi0_0 is None:
+        psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
+    # print(f"Estimated Rc = {Rc0:.3g}, ψ₀ = {psi0_0:.3g}")
 
     # fit model, return NaNs if it fails
     try:
@@ -346,6 +349,7 @@ def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
             bounds=(0, np.inf)
         )
         ψ0_opt, Rc_opt = popt
+        # print(f"Estimated Rc = {Rc_opt:.3g}, ψ₀ = {ψ0_opt:.3g}")
         return Rc_opt, ψ0_opt
     except Exception:
         return np.nan, np.nan
@@ -382,154 +386,6 @@ def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
 
 
     
-
-
-import numpy as np
-from scipy.optimize import least_squares
-
-def fit_eddy_profile(xi, yi, ui, vi, xc, yc, Q,
-                     p0=(1.0, 1.0), bounds=None, tol=1e-8):
-    """
-    Fit the full radial velocity profile of a Gaussian eddy to recover Rc and psi0.
-    
-    Parameters
-    ----------
-    xi, yi : array-like
-        Coordinates of measurement points.
-    ui, vi : array-like
-        Observed velocity components.
-    xc, yc : float
-        Eddy centre coordinates.
-    Q : 2x2 array_like
-        Ellipse shape matrix for quadratic form.
-    p0 : tuple, optional
-        Initial guess for (psi0, Rc).
-    bounds : 2-tuple of array-like, optional
-        Bounds on (psi0, Rc): ([psi0_min, Rc_min], [psi0_max, Rc_max]).
-        Default: Rc > tol, psi0 unbounded.
-    tol : float
-        Minimum radius threshold to avoid division by zero.
-    
-    Returns
-    -------
-    Rc_opt : float
-        Fitted decay radius.
-    psi0_opt : float
-        Fitted central streamfunction.
-    """
-    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
-    dx = xi - xc
-    dy = yi - yc
-    # elliptical radius
-    rho2 = Q[0,0]*dx**2 + 2*Q[0,1]*dx*dy + Q[1,1]*dy**2
-    rho = np.sqrt(np.clip(rho2, 0, None))
-    
-    # mask out points too close to centre
-    mask = rho > tol
-    if not np.any(mask):
-        return np.nan, np.nan
-        # raise ValueError("No points with rho > tol; cannot fit profile.")
-    
-    rho_m = rho[mask]
-    ui_m = ui[mask]
-    vi_m = vi[mask]
-    dx_m = dx[mask]
-    dy_m = dy[mask]
-    
-    # tangential velocity
-    r_hat = np.vstack((dx_m, dy_m)) / rho_m
-    theta_hat = np.vstack((-r_hat[1], r_hat[0]))
-    v_theta = theta_hat[0]*ui_m + theta_hat[1]*vi_m
-
-    def residuals(p):
-        psi0, Rc = p
-        v_pred = (psi0 / Rc**2) * rho_m * np.exp(-rho_m**2 / Rc**2)
-        return v_pred - v_theta
-
-    if bounds is None:
-        bounds = ([-np.inf, tol], [np.inf, np.inf])
-
-    res = least_squares(residuals, x0=p0, bounds=bounds)
-    psi0_opt, Rc_opt = res.x
-    return Rc_opt, psi0_opt
-
-
-def compute_Rc_psi0_scattered(xi, yi, ui, vi, xc, yc, Q,
-                              p0=(1.0, 1.0), bounds=None, tol=0.0):
-    from scipy.optimize import least_squares
-
-    """
-    Estimate Rc and psi0 directly from scattered velocity data.
-    
-    Parameters
-    ----------
-    xi, yi : array-like, shape (n,)
-        Coordinates of measurement points.
-    ui, vi : array-like, shape (n,)
-        Observed velocity components.
-    xc, yc : float
-        Eddy centre coordinates.
-    Q : 2x2 array_like
-        Shape matrix defining the quadratic form for elliptical radius.
-    p0 : tuple of float, optional
-        Initial guess for (psi0, Rc).
-    bounds : 2-tuple of array-like, optional
-        Bounds on (psi0, Rc): ([psi0_min, Rc_min], [psi0_max, Rc_max]).
-        Default enforces Rc > tol, psi0 unbounded.
-    tol : float, optional
-        Radius threshold to mask out points too close to centre.
-    
-    Returns
-    -------
-    Rc_opt : float
-        Fitted decay radius.
-    psi0_opt : float
-        Fitted central streamfunction amplitude.
-    """
-    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
-    dx = xi - xc
-    dy = yi - yc
-    # compute elliptical radius
-    rho2 = Q[0,0]*dx**2 + 2*Q[0,1]*dx*dy + Q[1,1]*dy**2
-    rho = np.sqrt(np.clip(rho2, 0, None))
-    
-    # # mask out points too close to the centre
-    # mask = rho > tol
-    # if np.sum(mask) < 3:
-    #     raise ValueError("Need at least 3 valid points (rho > tol) to fit.")
-    # rho_m = rho[mask]
-    # ui_m = ui[mask]
-    # vi_m = vi[mask]
-    # dx_m = dx[mask]
-    # dy_m = dy[mask]
-
-    rho_m = rho
-    ui_m = ui
-    vi_m = vi
-    dx_m = dx
-    dy_m = dy
-    
-    
-    # project velocities onto tangential direction
-    r_hat = np.vstack((dx_m, dy_m)) / rho_m
-    theta_hat = np.vstack((-r_hat[1], r_hat[0]))
-    v_theta = theta_hat[0]*ui_m + theta_hat[1]*vi_m
-
-    # residual function for least-squares: parameters [psi0, Rc]
-    def residuals(p):
-        psi0, Rc = p
-        v_pred = (psi0 / Rc**2) * rho_m * np.exp(-rho_m**2 / Rc**2)
-        return v_pred - v_theta
-
-    # default bounds: psi0 free, Rc > tol
-    if bounds is None:
-        bounds = ([-np.inf, tol], [np.inf, np.inf])
-
-    res = least_squares(residuals, x0=p0, bounds=bounds)
-    psi0_opt, Rc_opt = res.x
-    return Rc_opt, psi0_opt
-
-
 
 
 
@@ -581,39 +437,6 @@ def gaussian_vel_reconstruction(xc, yc, q11, q12, q22, Rc, psi0, X=None, Y=None)
     v   = -psi0/Rc**2 * rho_x * exp_t
 
     return u, v, X, Y
-
-# def gaussian_vel_reconstruction(x0, y0, Q11, Q12, Q22, Rc, psi0, X=None, Y=None, flag=True): 
-
-#     if flag:
-#         s = - Rc**2 / psi0
-#     else:
-#         s = 1
-    
-#     q11 = s * Q11
-#     q12 = s * Q12
-#     q22 = s * Q22
-
-#     if X is None:
-#         width = 200
-#         x = np.linspace(x0-width, x0+width, 51)
-#         y = np.linspace(y0-width, y0+width, 51)
-#         X, Y = np.meshgrid(x, y)
-    
-#     dx, dy = X - x0, Y - y0
-    
-#     phi   = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-#     phi_x = 2*q11*dx  + 2*q12*dy
-#     phi_y = 2*q22*dy  + 2*q12*dx
-    
-#     # 5) build Gaussian streamfunction with that R
-#     exp_term = np.exp(-phi / Rc**2)
-#     psi_x = -phi_x / Rc**2 * exp_term
-#     psi_y = -phi_y / Rc**2 * exp_term
-    
-#     u =  psi_y * psi0
-#     v = -psi_x * psi0
-
-#     return u, v, X, Y
 
 from scipy.sparse import diags, eye, kron, csr_matrix
 from scipy.sparse.linalg import spsolve
