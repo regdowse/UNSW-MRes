@@ -148,8 +148,7 @@ def moca(l, VT, VN):
             np.nan,  
             nan2,  
             np.nan,  
-            np.nan,
-            nan2     
+            np.nan
         )
     
     def find_root(x, y):
@@ -184,6 +183,9 @@ def moca(l, VT, VN):
     xc, yc = l0, r0
 
     Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
+    
+    psi0 = find_optimal_psi0(xi, yi, ui, vi,
+                      xc, yc, Q11, Q12, Q22, Rc)
 
     return l0, r0, w, Q, Rc, psi0
 
@@ -198,7 +200,6 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
             nan2, 
             np.nan,   
             np.nan, 
-            # nan2     
         )
     
     def find_root(x, y, degree=3):
@@ -231,7 +232,6 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
             nan2, 
             np.nan,   
             np.nan, 
-            # nan2 
         )
     
     center_x, center_y = next(iter(common_points))
@@ -278,6 +278,8 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     vi = np.concatenate([v1f, v2])
 
     Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
+    psi0 = find_optimal_psi0(xi, yi, ui, vi,
+                      xc, yc, Q11, Q12, Q22, Rc)
 
     return xc, yc, w, Q, Rc, psi0
 
@@ -291,8 +293,7 @@ def espra(xi, yi, ui, vi):
             np.nan,   
             nan2, 
             np.nan,   
-            np.nan, 
-            nan2 
+            np.nan,  
         )
     
     from scipy.optimize import least_squares
@@ -316,11 +317,17 @@ def espra(xi, yi, ui, vi):
 
     Q = np.array([[Q11, Q12], [Q12, Q22]])
 
+    # s = (4*q11)/w
+    # q = s*Q
+
     Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
 
-    return xc, yc, w, Q, Rc, psi0
+    psi0 = find_optimal_psi0(xi, yi, ui, vi,
+                      xc, yc, Q11, Q12, Q22, Rc)
 
-def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi, psi0_0=None):
+    return xc, yc, w, Q, Rc, psi0
+    
+def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
     
     from scipy.optimize import curve_fit
     # ensure numpy arrays (not pandas Series)
@@ -336,28 +343,49 @@ def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi, psi0_0=None):
     # “peak” initial guess
     i_peak = np.nanargmax(v)
     Rc0   = np.sqrt(2) * r[i_peak]
-    if psi0_0 is None:
-        psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
-    # print(f"Estimated Rc = {Rc0:.3g}, ψ₀ = {psi0_0:.3g}")
+    psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
 
-    # fit model, return NaNs if it fails
-    try:
-        popt, _ = curve_fit(
-            lambda rr, ψ0, Rc: 2*ψ0/Rc**2 * rr * np.exp(-rr**2/Rc**2),
-            r, v,
-            p0=[psi0_0, Rc0],
-            bounds=(0, np.inf)
-        )
-        ψ0_opt, Rc_opt = popt
-        # print(f"Estimated Rc = {Rc_opt:.3g}, ψ₀ = {ψ0_opt:.3g}")
-        return Rc_opt, ψ0_opt
-    except Exception:
-        return np.nan, np.nan
+    return Rc0, psi0_0
 
+    # try:
+    #     popt, _ = curve_fit(
+    #         lambda rr, ψ0, Rc: 2*ψ0/Rc**2 * rr * np.exp(-rr**2/Rc**2),
+    #         r, v,
+    #         p0=[psi0_0, Rc0],
+    #         bounds=(0, np.inf)
+    #     )
+    #     ψ0_opt, Rc_opt = popt
+
+    #     return Rc_opt, ψ0_opt
+    # except Exception:
+    #     return np.nan, np.nan
 
 
-
-
+def find_optimal_psi0(xi, yi, ui, vi,
+                      xc, yc, Q11, Q12, Q22, Rc,
+                      bounds=(1e-6, 1e6), method='bounded'):
+    from scipy.optimize import minimize_scalar
+    """
+    Estimate the ψ₀ that minimises
+      R1(ψ₀) = Σ_i [ (u_i + β_i e^{γ_i/ψ₀})^2 + (v_i - α_i e^{γ_i/ψ₀})^2 ],
+    where
+      γ_i = Q11·dx² + 2·Q12·dx·dy + Q22·dy²,
+      α_i = 2·Q11·dx + 2·Q12·dy,
+      β_i = 2·Q22·dy + 2·Q12·dx.
+    """
+    def R1(psi0):
+        dx = xi - xc
+        dy = yi - yc
+        gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
+        alpha = 2*Q11*dx + 2*Q12*dy
+        beta  = 2*Q22*dy + 2*Q12*dx
+        E = np.exp(gamma / psi0)
+        u_pred = -beta * E
+        v_pred =  alpha * E
+        return np.sum((ui - u_pred)**2 + (vi - v_pred)**2)
+    
+    res = minimize_scalar(R1, bounds=bounds, method=method)
+    return res.x
 
 
 
