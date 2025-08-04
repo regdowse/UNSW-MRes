@@ -148,7 +148,8 @@ def moca(l, VT, VN):
             np.nan,  
             nan2,  
             np.nan,  
-            np.nan
+            np.nan,
+            nan2
         )
     
     def find_root(x, y):
@@ -182,12 +183,14 @@ def moca(l, VT, VN):
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     xc, yc = l0, r0
 
-    Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
+    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
     
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22, Rc)
+                      xc, yc, Q11, Q12, Q22)
+    s = -Rc**2/psi0
+    q = s*Q
 
-    return l0, r0, w, Q, Rc, psi0
+    return l0, r0, w, Q, Rc, psi0, q
 
 def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
 
@@ -200,6 +203,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
             nan2, 
             np.nan,   
             np.nan, 
+            nan2
         )
     
     def find_root(x, y, degree=3):
@@ -232,6 +236,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
             nan2, 
             np.nan,   
             np.nan, 
+            nan2
         )
     
     center_x, center_y = next(iter(common_points))
@@ -277,11 +282,14 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
 
-    Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
+    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22, Rc)
+                      xc, yc, Q11, Q12, Q22)
 
-    return xc, yc, w, Q, Rc, psi0
+    s = -Rc**2/psi0
+    q = s*Q
+
+    return xc, yc, w, Q, Rc, psi0, q
 
 def espra(xi, yi, ui, vi):
 
@@ -294,6 +302,7 @@ def espra(xi, yi, ui, vi):
             nan2, 
             np.nan,   
             np.nan,  
+            nan2
         )
     
     from scipy.optimize import least_squares
@@ -317,17 +326,17 @@ def espra(xi, yi, ui, vi):
 
     Q = np.array([[Q11, Q12], [Q12, Q22]])
 
-    # s = (4*q11)/w
-    # q = s*Q
-
-    Rc, psi0 = Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi)
+    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
 
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22, Rc)
+                      xc, yc, Q11, Q12, Q22)
 
-    return xc, yc, w, Q, Rc, psi0
+    s = -Rc**2/psi0
+    q = s*Q
+
+    return xc, yc, w, Q, Rc, psi0, q
     
-def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
+def find_optimal_Rc(xc, yc, xi, yi, ui, vi):
     
     from scipy.optimize import curve_fit
     # ensure numpy arrays (not pandas Series)
@@ -345,7 +354,7 @@ def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
     Rc0   = np.sqrt(2) * r[i_peak]
     psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
 
-    return Rc0, psi0_0
+    return Rc0
 
     # try:
     #     popt, _ = curve_fit(
@@ -362,8 +371,8 @@ def Rc_psi0_optimiser(xc, yc, xi, yi, ui, vi):
 
 
 def find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22, Rc,
-                      bounds=(1e-6, 1e6), method='bounded'):
+                      xc, yc, Q11, Q12, Q22,
+                      bounds=(-1e6, 1e6), method='bounded'):
     from scipy.optimize import minimize_scalar
     """
     Estimate the ψ₀ that minimises
