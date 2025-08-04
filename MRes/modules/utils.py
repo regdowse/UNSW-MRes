@@ -183,10 +183,14 @@ def moca(l, VT, VN):
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     xc, yc = l0, r0
 
-    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
+    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
     
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
+
+    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
+
+    
     s = -Rc**2/psi0
     q = s*Q
 
@@ -282,9 +286,11 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
 
-    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
+    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
+
+    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
 
     s = -Rc**2/psi0
     q = s*Q
@@ -326,48 +332,70 @@ def espra(xi, yi, ui, vi):
 
     Q = np.array([[Q11, Q12], [Q12, Q22]])
 
-    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
+    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
 
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
+
+    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
 
     s = -Rc**2/psi0
     q = s*Q
 
     return xc, yc, w, Q, Rc, psi0, q
     
-def find_optimal_Rc(xc, yc, xi, yi, ui, vi):
+# def find_optimal_Rc(xc, yc, xi, yi, ui, vi):
     
-    from scipy.optimize import curve_fit
-    # ensure numpy arrays (not pandas Series)
-    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
+#     from scipy.optimize import curve_fit
+#     # ensure numpy arrays (not pandas Series)
+#     xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
 
-    # compute radii and tangential speed
+#     # compute radii and tangential speed
+#     dx, dy = xi - xc, yi - yc
+#     r = np.hypot(dx, dy)
+#     v = np.zeros_like(r)
+#     mask = r > 0
+#     v[mask] = np.abs((-ui[mask]*dy[mask] + vi[mask]*dx[mask]) / r[mask])
+
+#     # “peak” initial guess
+#     i_peak = np.nanargmax(v)
+#     Rc0   = np.sqrt(2) * r[i_peak]
+#     psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
+
+#     return Rc0
+
+
+def find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0):
+    from scipy.optimize import curve_fit
+    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
     dx, dy = xi - xc, yi - yc
     r = np.hypot(dx, dy)
-    v = np.zeros_like(r)
-    mask = r > 0
-    v[mask] = np.abs((-ui[mask]*dy[mask] + vi[mask]*dx[mask]) / r[mask])
 
-    # “peak” initial guess
-    i_peak = np.nanargmax(v)
-    Rc0   = np.sqrt(2) * r[i_peak]
-    psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
+    # tangential velocity
+    v_theta = np.zeros_like(r)
+    mask_r = r > 0
+    v_theta[mask_r] = np.abs((-ui[mask_r]*dy[mask_r] + vi[mask_r]*dx[mask_r]) / r[mask_r])
 
-    return Rc0
+    # gamma term
+    gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
 
-    # try:
-    #     popt, _ = curve_fit(
-    #         lambda rr, ψ0, Rc: 2*ψ0/Rc**2 * rr * np.exp(-rr**2/Rc**2),
-    #         r, v,
-    #         p0=[psi0_0, Rc0],
-    #         bounds=(0, np.inf)
-    #     )
-    #     ψ0_opt, Rc_opt = popt
+    # initial guess from "peak"
+    i_peak = np.nanargmax(v_theta)
+    Rc0 = np.sqrt(2) * r[i_peak]
 
-    #     return Rc_opt, ψ0_opt
-    # except Exception:
-    #     return np.nan, np.nan
+    # model from rho definition
+    def model(_, Rc):
+        rho2 = -Rc**2 / psi0 * gamma
+        rho2 = np.where(rho2 >= 0, rho2, np.nan)  # avoid imaginary
+        return (2*np.sqrt(rho2) * psi0 / Rc**2) * np.exp(-rho2 / Rc**2)
+
+    mask_valid = mask_r & np.isfinite(v_theta) & np.isfinite(gamma)
+    try:
+        Rc = curve_fit(model, None, v_theta[mask_valid],
+                       p0=[Rc0], bounds=(1e-6, 1e6))[0][0]
+    except Exception:
+        Rc = Rc0
+    return Rc
 
 
 def find_optimal_psi0(xi, yi, ui, vi,
