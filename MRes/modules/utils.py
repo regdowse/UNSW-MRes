@@ -371,31 +371,40 @@ def find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0):
     dx, dy = xi - xc, yi - yc
     r = np.hypot(dx, dy)
 
+    # gamma term
+    gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
+
+    # Rcs = np.abs(r*np.sqrt(-gamma*psi0)/gamma).flatten()
+
+    # print(Rcs)
+
+    # Rcs = Rcs[np.isfinite(Rcs)]
+
+    # Rc = np.mean(Rcs)
+
+    # return Rc
+
     # tangential velocity
     v_theta = np.zeros_like(r)
     mask_r = r > 0
     v_theta[mask_r] = np.abs((-ui[mask_r]*dy[mask_r] + vi[mask_r]*dx[mask_r]) / r[mask_r])
 
-    # gamma term
-    gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
-
     # initial guess from "peak"
     i_peak = np.nanargmax(v_theta)
     Rc0 = np.sqrt(2) * r[i_peak]
 
-    # model from rho definition
-    def model(_, Rc):
-        rho2 = -Rc**2 / psi0 * gamma
-        rho2 = np.where(rho2 >= 0, rho2, np.nan)  # avoid imaginary
-        return (2*np.sqrt(rho2) * psi0 / Rc**2) * np.exp(-rho2 / Rc**2)
+    return Rc0
 
-    mask_valid = mask_r & np.isfinite(v_theta) & np.isfinite(gamma)
-    try:
-        Rc = curve_fit(model, None, v_theta[mask_valid],
-                       p0=[Rc0], bounds=(1e-6, 1e6))[0][0]
-    except Exception:
-        Rc = Rc0
-    return Rc
+    # # print(Rc0)
+
+    # # return Rc0
+
+    # Rcs = 2*np.sqrt(-psi0*gamma)/v_theta * np.exp(gamma/psi0)
+    # Rcs = Rcs[np.isfinite(Rcs)]
+    
+    # Rc = np.mean(Rcs)
+
+    # return Rc
 
 
 def find_optimal_psi0(xi, yi, ui, vi,
