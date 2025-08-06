@@ -188,7 +188,8 @@ def moca(l, VT, VN):
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
+    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
+    Rc = np.nan
 
     
     s = -Rc**2/psi0
@@ -290,7 +291,8 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
+    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
+    Rc = np.nan
 
     s = -Rc**2/psi0
     q = s*Q
@@ -337,13 +339,45 @@ def espra(xi, yi, ui, vi):
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
+    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, psi0)
+    Rc = np.nan
 
     s = -Rc**2/psi0
     q = s*Q
 
     return xc, yc, w, Q, Rc, psi0, q
+
+
+
+
+
+
+
+
     
+
+
+from scipy.optimize import minimize
+def find_optimal_Rc(xc, yc, xi, yi, ui, vi, psi0):
+
+    r_obs = np.hypot(xi-xc, yi-yc)
+    
+    v_obs = np.abs(calc_tang_vel(xc, yc, xi, yi, ui, vi))
+    # v_obsmax = v_obs.max()
+
+    v_obsmax = psi0
+
+    def fit_Rc(r, v_obs, v_obsmax):
+        def sse(Rc):
+            v_model = v_obsmax * (r / Rc) * np.exp(-r**2 / Rc**2)
+            return np.sum((v_obs - v_model)**2)
+        res = minimize(lambda Rc: sse(Rc[0]), x0=[np.median(r)], bounds=[(1e-6, None)])
+        return res.x[0]
+
+    Rc_opt = fit_Rc(r_obs, v_obs, v_obsmax)
+
+    return Rc_opt
+
 # def find_optimal_Rc(xc, yc, xi, yi, ui, vi):
     
 #     from scipy.optimize import curve_fit
@@ -365,46 +399,46 @@ def espra(xi, yi, ui, vi):
 #     return Rc0
 
 
-def find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0):
-    from scipy.optimize import curve_fit
-    xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
-    dx, dy = xi - xc, yi - yc
-    r = np.hypot(dx, dy)
+# def find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0):
+#     from scipy.optimize import curve_fit
+#     xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
+#     dx, dy = xi - xc, yi - yc
+#     r = np.hypot(dx, dy)
 
-    # gamma term
-    gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
+#     # gamma term
+#     gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
 
-    # Rcs = np.abs(r*np.sqrt(-gamma*psi0)/gamma).flatten()
+#     # Rcs = np.abs(r*np.sqrt(-gamma*psi0)/gamma).flatten()
 
-    # print(Rcs)
+#     # print(Rcs)
 
-    # Rcs = Rcs[np.isfinite(Rcs)]
+#     # Rcs = Rcs[np.isfinite(Rcs)]
 
-    # Rc = np.mean(Rcs)
+#     # Rc = np.mean(Rcs)
 
-    # return Rc
+#     # return Rc
 
-    # tangential velocity
-    v_theta = np.zeros_like(r)
-    mask_r = r > 0
-    v_theta[mask_r] = np.abs((-ui[mask_r]*dy[mask_r] + vi[mask_r]*dx[mask_r]) / r[mask_r])
+#     # tangential velocity
+#     v_theta = np.zeros_like(r)
+#     mask_r = r > 0
+#     v_theta[mask_r] = np.abs((-ui[mask_r]*dy[mask_r] + vi[mask_r]*dx[mask_r]) / r[mask_r])
 
-    # initial guess from "peak"
-    i_peak = np.nanargmax(v_theta)
-    Rc0 = np.sqrt(2) * r[i_peak]
+#     # initial guess from "peak"
+#     i_peak = np.nanargmax(v_theta)
+#     Rc0 = np.sqrt(2) * r[i_peak]
 
-    return Rc0
+#     return Rc0
 
-    # # print(Rc0)
+#     # # print(Rc0)
 
-    # # return Rc0
+#     # # return Rc0
 
-    # Rcs = 2*np.sqrt(-psi0*gamma)/v_theta * np.exp(gamma/psi0)
-    # Rcs = Rcs[np.isfinite(Rcs)]
+#     # Rcs = 2*np.sqrt(-psi0*gamma)/v_theta * np.exp(gamma/psi0)
+#     # Rcs = Rcs[np.isfinite(Rcs)]
     
-    # Rc = np.mean(Rcs)
+#     # Rc = np.mean(Rcs)
 
-    # return Rc
+#     # return Rc
 
 
 def find_optimal_psi0(xi, yi, ui, vi,
@@ -433,7 +467,25 @@ def find_optimal_psi0(xi, yi, ui, vi,
     res = minimize_scalar(R1, bounds=bounds, method=method)
     return res.x
 
+def calc_tang_vel(xc, yc, xp, yp, up, vp):
+    dx = xp - xc
+    dy = yp - yc
+    r = np.hypot(dx, dy)
+    v_theta = (-up * dy + vp * dx) / r
+    v_theta = np.where(r>0, v_theta, 0.0)
+    return v_theta
 
+def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp):
+    dx = xp - xc
+    dy = yp - yc
+    r = np.hypot(dx, dy)
+    v_theta = np.abs((-up * dy + vp * dx) / r)
+    v_theta = np.where(r>0, v_theta, 0.0)
+
+    i_peak = np.nanargmax(v_theta)
+    r_peak =  r[i_peak]
+    
+    return r_peak
 
 
 
