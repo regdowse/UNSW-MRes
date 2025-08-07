@@ -186,9 +186,8 @@ def moca(l, VT, VN):
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    Rc = np.nan
+    Rc = calc_tang_vel_max_r(xc, yc, xi, yi, ui, vi)
 
-    
     s = -Rc**2/psi0
     q = s*Q
 
@@ -287,7 +286,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    Rc = np.nan
+    Rc = calc_tang_vel_max_r(xc, yc, xi, yi, ui, vi)
 
     s = -Rc**2/psi0
     q = s*Q
@@ -345,6 +344,11 @@ def espra(xi, yi, ui, vi):
 
 
 
+
+
+
+
+
 # Finding psi0
 
 def find_optimal_psi0(xi, yi, ui, vi,
@@ -373,12 +377,6 @@ def find_optimal_psi0(xi, yi, ui, vi,
     res = minimize_scalar(R1, bounds=bounds, method=method)
     return res.x
 
-
-
-
-
-
-    
 # Finding Rc
 
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
@@ -764,6 +762,11 @@ def rossby_number(vort, lat_deg):
     phi = np.radians(lat_deg)
     f = np.abs(2 * omega * np.sin(phi))
     return vort / f
+
+def deg_to_m(lat):
+    R = 6371000
+    rad = np.radians(lat)
+    return (np.pi/180)*R*np.sqrt((np.cos(rad))**2 + 1)
 
 
 
