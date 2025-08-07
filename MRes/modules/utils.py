@@ -183,12 +183,9 @@ def moca(l, VT, VN):
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     xc, yc = l0, r0
 
-    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
-    
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
     Rc = np.nan
 
     
@@ -287,11 +284,9 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
 
-    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0)
     Rc = np.nan
 
     s = -Rc**2/psi0
@@ -334,13 +329,10 @@ def espra(xi, yi, ui, vi):
 
     Q = np.array([[Q11, Q12], [Q12, Q22]])
 
-    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi)
-
     psi0 = find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22)
 
-    # Rc = find_optimal_Rc(xc, yc, xi, yi, ui, vi, psi0)
-    Rc = np.nan
+    Rc = calc_tang_vel_max_r(xc, yc, xi, yi, ui, vi)
 
     s = -Rc**2/psi0
     q = s*Q
@@ -353,93 +345,7 @@ def espra(xi, yi, ui, vi):
 
 
 
-
-    
-
-
-from scipy.optimize import minimize
-def find_optimal_Rc(xc, yc, xi, yi, ui, vi, psi0):
-
-    r_obs = np.hypot(xi-xc, yi-yc)
-    
-    v_obs = np.abs(calc_tang_vel(xc, yc, xi, yi, ui, vi))
-    # v_obsmax = v_obs.max()
-
-    v_obsmax = psi0
-
-    def fit_Rc(r, v_obs, v_obsmax):
-        def sse(Rc):
-            v_model = v_obsmax * (r / Rc) * np.exp(-r**2 / Rc**2)
-            return np.sum((v_obs - v_model)**2)
-        res = minimize(lambda Rc: sse(Rc[0]), x0=[np.median(r)], bounds=[(1e-6, None)])
-        return res.x[0]
-
-    Rc_opt = fit_Rc(r_obs, v_obs, v_obsmax)
-
-    return Rc_opt
-
-# def find_optimal_Rc(xc, yc, xi, yi, ui, vi):
-    
-#     from scipy.optimize import curve_fit
-#     # ensure numpy arrays (not pandas Series)
-#     xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
-
-#     # compute radii and tangential speed
-#     dx, dy = xi - xc, yi - yc
-#     r = np.hypot(dx, dy)
-#     v = np.zeros_like(r)
-#     mask = r > 0
-#     v[mask] = np.abs((-ui[mask]*dy[mask] + vi[mask]*dx[mask]) / r[mask])
-
-#     # “peak” initial guess
-#     i_peak = np.nanargmax(v)
-#     Rc0   = np.sqrt(2) * r[i_peak]
-#     psi0_0 = v[i_peak] * r[i_peak] * np.exp(0.5)
-
-#     return Rc0
-
-
-# def find_optimal_Rc(xc, yc, xi, yi, ui, vi, Q11, Q12, Q22, psi0):
-#     from scipy.optimize import curve_fit
-#     xi, yi, ui, vi = map(np.asarray, (xi, yi, ui, vi))
-#     dx, dy = xi - xc, yi - yc
-#     r = np.hypot(dx, dy)
-
-#     # gamma term
-#     gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
-
-#     # Rcs = np.abs(r*np.sqrt(-gamma*psi0)/gamma).flatten()
-
-#     # print(Rcs)
-
-#     # Rcs = Rcs[np.isfinite(Rcs)]
-
-#     # Rc = np.mean(Rcs)
-
-#     # return Rc
-
-#     # tangential velocity
-#     v_theta = np.zeros_like(r)
-#     mask_r = r > 0
-#     v_theta[mask_r] = np.abs((-ui[mask_r]*dy[mask_r] + vi[mask_r]*dx[mask_r]) / r[mask_r])
-
-#     # initial guess from "peak"
-#     i_peak = np.nanargmax(v_theta)
-#     Rc0 = np.sqrt(2) * r[i_peak]
-
-#     return Rc0
-
-#     # # print(Rc0)
-
-#     # # return Rc0
-
-#     # Rcs = 2*np.sqrt(-psi0*gamma)/v_theta * np.exp(gamma/psi0)
-#     # Rcs = Rcs[np.isfinite(Rcs)]
-    
-#     # Rc = np.mean(Rcs)
-
-#     # return Rc
-
+# Finding psi0
 
 def find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22,
@@ -467,7 +373,17 @@ def find_optimal_psi0(xi, yi, ui, vi,
     res = minimize_scalar(R1, bounds=bounds, method=method)
     return res.x
 
+
+
+
+
+
+    
+# Finding Rc
+
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
+    xp, yp = np.asarray(xp), np.asarray(yp)
+    up, vp = np.asarray(up), np.asarray(vp)
     dx = xp - xc
     dy = yp - yc
     r = np.hypot(dx, dy)
@@ -476,6 +392,8 @@ def calc_tang_vel(xc, yc, xp, yp, up, vp):
     return v_theta
 
 def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp):
+    xp, yp = np.asarray(xp), np.asarray(yp)
+    up, vp = np.asarray(up), np.asarray(vp)
     dx = xp - xc
     dy = yp - yc
     r = np.hypot(dx, dy)
@@ -487,9 +405,109 @@ def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp):
     
     return r_peak
 
+def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False):
+    """
+    Returns a dict with keys 'up', 'right', 'down', 'left'.
 
+    If return_index is True, values are the number of grid steps from (nic,njc)
+    where |v_theta| stops growing.
 
+    If return_index is False, values are the Euclidean distance from (xc,yc)
+    to that stopping point.
+    """
+    # 1) first find the stopping step in each direction
+    steps = {'up': 0, 'right': 0, 'down': 0, 'left': 0}
 
+    dis = np.hypot(x - xc, y - yc)
+    nic, njc = np.unravel_index(np.argmin(dis), dis.shape)
+
+    # Up
+    v_old = 0
+    for r in range(1, nic+1):
+        i, j = nic - r, njc
+        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
+        if vt < v_old:
+            break
+        v_old = vt
+        steps['up'] = r
+
+    # Right
+    v_old = 0
+    max_rt = u.shape[1] - njc - 1
+    for r in range(1, max_rt+1):
+        i, j = nic, njc + r
+        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
+        if vt < v_old:
+            break
+        v_old = vt
+        steps['right'] = r
+
+    # Down
+    v_old = 0
+    max_dn = u.shape[0] - nic - 1
+    for r in range(1, max_dn+1):
+        i, j = nic + r, njc
+        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
+        if vt < v_old:
+            break
+        v_old = vt
+        steps['down'] = r
+
+    # Left
+    v_old = 0
+    for r in range(1, njc+1):
+        i, j = nic, njc - r
+        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
+        if vt < v_old:
+            break
+        v_old = vt
+        steps['left'] = r
+
+    if return_index:
+        return steps
+
+    # 2) otherwise convert to Euclidean distances
+    dists = {}
+    for direction, r in steps.items():
+        if r == 0:
+            dists[direction] = 0.0
+        else:
+            if direction == 'up':
+                i0, j0 = nic - r, njc
+            elif direction == 'right':
+                i0, j0 = nic, njc + r
+            elif direction == 'down':
+                i0, j0 = nic + r, njc
+            else:  # 'left'
+                i0, j0 = nic, njc - r
+
+            dists[direction] = float(np.hypot(x[i0,j0] - xc, y[i0,j0] - yc))
+
+    return dists
+
+def eddy_core_radius(r, v_theta):
+    r, v = np.asarray(r), np.asarray(v_theta)
+    m = ~np.isnan(r)&~np.isnan(v)
+    r, v = r[m], v[m]
+    order = np.argsort(r)
+    r, v = r[order], v[order]
+
+    R2_list, slopes = [], []
+    for n in range(2, len(r)+1):
+        # slope of vt=r·Ω through the origin
+        Ω = np.dot(r[:n], v[:n]) / np.dot(r[:n], r[:n])
+        v_fit = Ω * r[:n]
+        ss_res = np.sum((v[:n] - v_fit)**2)
+        ss_tot = np.sum((v[:n] - v[:n].mean())**2)
+        R2_list.append(1 - ss_res/ss_tot)
+        slopes.append(Ω)
+
+    R2_list = smooth(R2_list, np.arange(len(R2_list)), num=len(R2_list), window=round(len(R2_list)*.1))
+
+    i_best = int(np.argmax(R2_list))
+    r_core   = r[i_best+1]     # +1 because R2_list[0] used r[:2], so index→r[1]
+    Ω_uniform = slopes[i_best]
+    return r_core, Ω_uniform, R2_list, slopes
 
 
 
