@@ -389,13 +389,31 @@ def calc_tang_vel(xc, yc, xp, yp, up, vp):
     v_theta = np.where(r>0, v_theta, 0.0)
     return v_theta
 
-def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp):
+def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp, cyc=None):
     xp, yp = np.asarray(xp), np.asarray(yp)
     up, vp = np.asarray(up), np.asarray(vp)
     dx = xp - xc
     dy = yp - yc
     r = np.hypot(dx, dy)
-    v_theta = np.abs((-up * dy + vp * dx) / r)
+    v_theta = (-up * dy + vp * dx) / r
+
+    if cyc is None:
+        v_theta = np.abs(v_theta)
+    elif cyc == 'AE':
+        mask = v_theta >= 0
+        if np.sum(mask) == 0:
+            return np.nan
+        v_theta = np.abs(v_theta[mask])
+        r = r[mask]
+    elif cyc == 'CE':
+        mask = v_theta <= 0
+        if np.sum(mask) == 0:
+            return np.nan
+        v_theta = np.abs(v_theta[mask])
+        r = r[mask]
+    else:
+        return np.nan
+
     v_theta = np.where(r>0, v_theta, 0.0)
 
     i_peak = np.nanargmax(v_theta)
