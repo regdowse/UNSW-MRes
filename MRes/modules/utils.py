@@ -347,13 +347,13 @@ def espra(xi, yi, ui, vi):
 
 
 
-
-
 # Finding psi0
 
 def find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22,
-                      bounds=(-1e6, 1e6), method='bounded'):
+                      bounds=(1e-6, 1e6),
+                      method='bounded',
+                      exp_clip=700):
     from scipy.optimize import minimize_scalar
     """
     Estimate the ψ₀ that minimises
@@ -363,19 +363,49 @@ def find_optimal_psi0(xi, yi, ui, vi,
       α_i = 2·Q11·dx + 2·Q12·dy,
       β_i = 2·Q22·dy + 2·Q12·dx.
     """
-    def R1(psi0):
-        dx = xi - xc
-        dy = yi - yc
-        gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
-        alpha = 2*Q11*dx + 2*Q12*dy
-        beta  = 2*Q22*dy + 2*Q12*dx
-        E = np.exp(gamma / psi0)
+    if np.isnan(Q11):
+        return np.nan
+
+    sign = 'positive' if Q11 < 0 else 'negative'
+    
+    xi = np.asarray(xi, dtype=np.float64)
+    yi = np.asarray(yi, dtype=np.float64)
+    ui = np.asarray(ui, dtype=np.float64)
+    vi = np.asarray(vi, dtype=np.float64)
+
+    dx = xi - xc
+    dy = yi - yc
+    gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
+    alpha = 2*Q11*dx + 2*Q12*dy
+    beta  = 2*Q22*dy + 2*Q12*dx
+
+    def obj(psi0):
+        # Stable exponent
+        z = np.clip(gamma / psi0, -exp_clip, exp_clip)
+        E = np.exp(z)
         u_pred = -beta * E
         v_pred =  alpha * E
-        return np.sum((ui - u_pred)**2 + (vi - v_pred)**2)
+        s = np.sum((ui - u_pred)**2 + (vi - v_pred)**2)
+        # Penalise any non-finite objective (keeps optimiser sane)
+        return s if np.isfinite(s) else 1e300
+
+    def solve_on_interval(lo, hi):
+        return minimize_scalar(obj, bounds=(lo, hi), method=method)
+
+    # Choose intervals
+    if sign == 'positive':
+        candidates = [solve_on_interval(bounds[0], bounds[1])]
+    elif sign == 'negative':
+        candidates = [solve_on_interval(-bounds[1], -bounds[0])]
+    else:  # auto: try both and pick the best
+        r_pos = solve_on_interval(bounds[0],  bounds[1])
+        r_neg = solve_on_interval(-bounds[1], -bounds[0])
+        candidates = [r_pos, r_neg]
+
+    best = min(candidates, key=lambda r: r.fun if np.isfinite(r.fun) else np.inf)
+    return best.x
+
     
-    res = minimize_scalar(R1, bounds=bounds, method=method)
-    return res.x
 
 # Finding Rc
 
@@ -423,66 +453,37 @@ def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp, cyc=None):
 
 def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False):
     """
-    Returns a dict with keys 'up', 'right', 'down', 'left'.
-
-    If return_index is True, values are the number of grid steps from (nic,njc)
-    where |v_theta| stops growing.
-
-    If return_index is False, values are the Euclidean distance from (xc,yc)
-    to that stopping point.
+    Returns dict of 'up','right','down','left' where each value is either:
+      - steps from (nic,njc) where |v_theta| stops growing (return_index=True), or
+      - Euclidean distance from (xc,yc) to that stopping point (return_index=False).
+    Stops early if a NaN is encountered.
     """
-    # 1) first find the stopping step in each direction
-    steps = {'up': 0, 'right': 0, 'down': 0, 'left': 0}
-
     dis = np.hypot(x - xc, y - yc)
-    nic, njc = np.unravel_index(np.argmin(dis), dis.shape)
+    dis_f = np.where(np.isfinite(dis), dis, np.inf)
+    nic, njc = np.unravel_index(np.argmin(dis_f), dis.shape)
 
-    # Up
-    v_old = 0
-    for r in range(1, nic+1):
-        i, j = nic - r, njc
-        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
-        if vt < v_old:
-            break
-        v_old = vt
-        steps['up'] = r
+    def walk(di, dj, max_r):
+        v_old = 0.0
+        steps = 0
+        for r in range(1, max_r + 1):
+            i, j = nic + di * r, njc + dj * r
+            vt = abs(calc_tang_vel(xc, yc, x[i, j], y[i, j], u[i, j], v[i, j]))
+            if np.isnan(vt) or vt < v_old:
+                break
+            v_old = vt
+            steps = r
+        return steps
 
-    # Right
-    v_old = 0
-    max_rt = u.shape[1] - njc - 1
-    for r in range(1, max_rt+1):
-        i, j = nic, njc + r
-        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
-        if vt < v_old:
-            break
-        v_old = vt
-        steps['right'] = r
-
-    # Down
-    v_old = 0
-    max_dn = u.shape[0] - nic - 1
-    for r in range(1, max_dn+1):
-        i, j = nic + r, njc
-        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
-        if vt < v_old:
-            break
-        v_old = vt
-        steps['down'] = r
-
-    # Left
-    v_old = 0
-    for r in range(1, njc+1):
-        i, j = nic, njc - r
-        vt = abs(calc_tang_vel(xc, yc, x[i,j], y[i,j], u[i,j], v[i,j]))
-        if vt < v_old:
-            break
-        v_old = vt
-        steps['left'] = r
+    steps = {
+        'up':    walk(-1,  0, nic),
+        'right': walk( 0,  1, u.shape[1] - njc - 1),
+        'down':  walk( 1,  0, u.shape[0] - nic - 1),
+        'left':  walk( 0, -1, njc),
+    }
 
     if return_index:
         return steps
 
-    # 2) otherwise convert to Euclidean distances
     dists = {}
     for direction, r in steps.items():
         if r == 0:
@@ -494,11 +495,9 @@ def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False
                 i0, j0 = nic, njc + r
             elif direction == 'down':
                 i0, j0 = nic + r, njc
-            else:  # 'left'
+            else:
                 i0, j0 = nic, njc - r
-
-            dists[direction] = float(np.hypot(x[i0,j0] - xc, y[i0,j0] - yc))
-
+            dists[direction] = float(np.hypot(x[i0, j0] - xc, y[i0, j0] - yc))
     return dists
 
 def eddy_core_radius(r, v_theta):
@@ -786,7 +785,138 @@ def deg_to_m(lat):
     rad = np.radians(lat)
     return (np.pi/180)*R*np.sqrt((np.cos(rad))**2 + 1)
 
+def nencioli(u, v, lon, lat, a, b):
+    """
+    Identify the points in the domain which satisfy the four velocity constraints for eddy detection.
 
+    Parameters:
+    - u, v: 2D velocity fields for u and v components
+    - lon, lat: Longitude and Latitude matrices
+    - mask: Matrix defining sea (1) and land points (0)
+    - a, b: Parameters used for constraints
+
+    Returns:
+    - eddy_uv: Positions that satisfy the first two constraints (for debugging)
+    - eddy_c: Positions satisfying the first three constraints (for debugging)
+    - eddy: Positions of the eddy centers with their type (cyclonic=1, anticyclonic=-1) (opposite for me)
+    """
+
+    borders = max(a, b) + 1
+
+    # Compute velocity magnitude
+    vel = np.sqrt(u**2 + v**2)
+
+    # Initialize arrays for storing eddy centers
+    eddy_uv = np.zeros((0, 2))
+    eddy_c = np.zeros((0, 2))
+    eddy = np.zeros((0, 3))
+
+    # Get domain dimensions
+    bound = vel.shape
+
+    # Loop through each latitudinal section
+    for i in range(borders, len(v) - borders + 1):
+        wrk = v[i, :]  # Latitudinal section of v
+
+        # First constraint: zero crossing in v component
+        s = np.sign(wrk)
+        indx = np.where(np.diff(s) != 0)[0]
+        indx = indx[(indx >= borders) & (indx < len(wrk) - borders)]
+
+        for ii in indx:
+            var = 0  # Eddy type (0 = no eddy, 1 = cyclonic, -1 = anticyclonic)
+            if wrk[ii] >= 0:  # Anticyclonic
+                if wrk[ii - a] > wrk[ii] and wrk[ii + 1 + a] < wrk[ii + 1]:
+                    var = -1
+            elif wrk[ii] < 0:  # Cyclonic
+                if wrk[ii - a] < wrk[ii] and wrk[ii + 1 + a] > wrk[ii + 1]:
+                    var = 1
+
+            # Second constraint: u component reversal
+            if var != 0:
+                if var == -1:
+                    if (u[i - a, ii] <= 0 and u[i - a, ii] <= u[i - 1, ii] and
+                        u[i + a, ii] >= 0 and u[i + a, ii] >= u[i + 1, ii]):
+                        eddy_uv = np.vstack([eddy_uv, [lat[i, ii], lon[i, ii]], [lat[i, ii + 1], lon[i, ii + 1]]])
+                    else:
+                        var = 0
+                elif var == 1:
+                    if (u[i - a, ii] >= 0 and u[i - a, ii] >= u[i - 1, ii] and
+                        u[i + a, ii] <= 0 and u[i + a, ii] <= u[i + 1, ii]):
+                        eddy_uv = np.vstack([eddy_uv, [lat[i, ii], lon[i, ii]], [lat[i, ii + 1], lon[i, ii + 1]]])
+                    else:
+                        var = 0
+
+                # Third constraint: velocity minimum
+                if var != 0:
+                    srch = vel[i - b:i + b, ii - b:ii + b + 1]
+                    slat = lat[i - b:i + b, ii - b:ii + b + 1]
+                    slon = lon[i - b:i + b, ii - b:ii + b + 1]
+                    X, Y = np.unravel_index(np.argmin(srch), srch.shape)
+                    srch2 = vel[max(i - b + X - 1 - b, 0):min(i - b + X - 1 + b, bound[0]),
+                                max(ii - b + Y - 1 - b, 0):min(ii - b + Y - 1 + b, bound[1])]
+
+                    if np.min(srch2) == np.min(srch):
+                        eddy_c = np.vstack([eddy_c, [slat[X, Y], slon[X, Y]]])
+                    else:
+                        var = 0
+
+                # Fourth constraint: vector rotation (simplified version)
+                d = a - 1
+                if var != 0:
+                    # Find indices of the estimated center in the large domain
+                    i1, i2 = np.where((lat == slat[X, Y]) & (lon == slon[X, Y]))
+
+                    i1, i2 = int(i1[0]), int(i2[0])
+                    
+                    # Extract velocities within "a-1" points from the estimated center
+                    u_small = u[max(i1 - d, 0):min(i1 + d, bound[0]), max(i2 - d, 0):min(i2 + d, bound[1])]
+                    v_small = v[max(i1 - d, 0):min(i1 + d, bound[0]), max(i2 - d, 0):min(i2 + d, bound[1])]
+                    
+                    # Apply constraint only if there are no NaNs in u_small
+                    if not np.isnan(u_small).any():
+                        # Boundary velocities
+                        u_bound = np.concatenate([u_small[0, :], u_small[1:, -1], u_small[-1, -2::-1], u_small[-2::-1, 0]])
+                        v_bound = np.concatenate([v_small[0, :], v_small[1:, -1], v_small[-1, -2::-1], v_small[-2::-1, 0]])
+
+                        # Vector defining which quadrant each boundary vector belongs to
+                        quadrants = np.zeros_like(u_bound)
+                        quadrants[(u_bound >= 0) & (v_bound >= 0)] = 1
+                        quadrants[(u_bound < 0) & (v_bound >= 0)] = 2
+                        quadrants[(u_bound < 0) & (v_bound < 0)] = 3
+                        quadrants[(u_bound >= 0) & (v_bound < 0)] = 4
+                        
+                        # Identify the first fourth quadrant vector
+                        spin = np.where(quadrants == 4)[0]
+                        
+                        # Apply the constraint only if the rotation is complete and not all vectors are in the fourth quadrant
+                        if spin.size > 0 and spin.size != quadrants.size:
+                            # If vectors start in the 4th quadrant, add 4 to all quadrant positions after the first occurrence
+                            if spin[0] == 0:
+                                spin = np.where(quadrants != 4)[0]
+                                spin = spin[0] - 1
+                                
+                            if not isinstance(spin, np.ndarray):
+                                spin = np.array([int(spin)])
+                            quadrants[spin[-1] + 1:] += 4
+                            
+                            # Inspect vector rotation: no consecutive vectors should be more than one quadrant apart
+                            # and there should be no backward rotation
+                            if not np.any(np.diff(quadrants) > 1) and not np.any(np.diff(quadrants) < 0):
+                                eddy = np.vstack([eddy, [slat[X, Y], slon[X, Y], var]])
+
+
+    # Process eddy results (sorting and removing duplicates)
+    eddy = np.unique(eddy, axis=0)
+    eddy_uv = np.unique(eddy_uv, axis=0)
+    eddy_c = np.unique(eddy_c, axis=0)
+    # Adjust for the Southern Hemisphere (flip cyclonic/anticyclonic labels)
+    # eddy[eddy[:, 0] < 0, 2] = -eddy[eddy[:, 0] < 0, 2]
+    eddy[:, 2] = -eddy[:, 2]
+    # Swap for personal preference 
+    eddy[:, [0, 1]] = eddy[:, [1, 0]]
+
+    return eddy_uv, eddy_c, eddy
 
 
 
