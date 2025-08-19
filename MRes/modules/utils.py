@@ -365,7 +365,6 @@ def find_optimal_psi0(xi, yi, ui, vi,
     """
     if np.isnan(Q11):
         return np.nan
-
     sign = 'positive' if Q11 < 0 else 'negative'
     
     xi = np.asarray(xi, dtype=np.float64)
