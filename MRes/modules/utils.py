@@ -917,7 +917,19 @@ def nencioli(u, v, lon, lat, a, b):
 
     return eddy_uv, eddy_c, eddy
 
+def tilt_distance_LI(x, y, z, zmin=None, zmax=None):
+    x, y, z = np.asarray(x), np.asarray(y), np.asarray(z)
+    m = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    if zmin is not None: m &= (z >= zmin)
+    if zmax is not None: m &= (z <= zmax)
+    x, y = x[m], y[m]
+    if x.size == 0: return np.nan, np.nan, (np.nan, np.nan)
 
+    TDx = np.nanmax(x) - np.nanmin(x)
+    TDy = np.nanmax(y) - np.nanmin(y)
+    TD  = np.hypot(TDx, TDy)
+    theta_deg = np.degrees(np.arctan2(TDy, TDx))
+    return TD, theta_deg, (TDx, TDy)
 
 
 
