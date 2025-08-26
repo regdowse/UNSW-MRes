@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 # import sys
 # sys.path.append("/home/z5297792/UNSW-MRes/MRes/modules") 
@@ -137,7 +138,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
 
     
 
-
+################################################ ESP Methods ################################################
 def moca(l, VT, VN):
 
     if np.any(np.isnan(VT)):
@@ -348,7 +349,6 @@ def espra(xi, yi, ui, vi):
 
 
 # Finding psi0
-
 def find_optimal_psi0(xi, yi, ui, vi,
                       xc, yc, Q11, Q12, Q22,
                       bounds=(1e-6, 1e6),
@@ -404,10 +404,7 @@ def find_optimal_psi0(xi, yi, ui, vi,
     best = min(candidates, key=lambda r: r.fun if np.isfinite(r.fun) else np.inf)
     return best.x
 
-    
-
 # Finding Rc
-
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
     up, vp = np.asarray(up), np.asarray(vp)
@@ -542,8 +539,140 @@ def eddy_core_radius(r, v_theta):
 
 
 
+################################################ TILT ################################################
+def bearing(a, b):
+    dx = b[0] - a[0]
+    dy = b[1] - a[1]
+    angle_rad = np.arctan2(dx, dy)  # note the order: dx, dy
+    angle_deg = np.degrees(angle_rad)
+    bearing = (angle_deg + 360) % 360
+    return bearing
 
+def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
     
+    df_tilt_data = pd.DataFrame(columns=['Eddy', 'Day', 'TiltDis', 'TiltDir'])
+    
+    diffs_x = {}
+    diffs_y = {}
+        
+    for d, day in enumerate(dic.keys()):
+    
+        df = dic[day].copy()
+        df['Depth'] = -df['Depth']
+        df = df[df['Depth'] <= max_depth]
+        # don’t drop rows — keep all depths, even if x or y are NaN
+        df = df.set_index('Depth').sort_index()
+
+        if len(df):
+            depths = df.index.values
+            # interpolate at every 10 m from 0 to max_depth
+            target_depths = np.arange(0, max_depth+1, depth_int)
+            valid = target_depths[
+                (target_depths >= depths.min()) &
+                (target_depths <= depths.max())
+            ]
+            if len(valid) < 2:
+                continue
+        
+            x_i = np.interp(valid, depths, df['x'].values, left=np.nan, right=np.nan)
+            y_i = np.interp(valid, depths, df['y'].values, left=np.nan, right=np.nan)
+        
+            dx = np.diff(x_i)
+            dy = np.diff(y_i)
+        
+            # use the actual depth levels (valid[:-1]) as the Series index
+            idx = valid[:-1]
+            diffs_x[f'$t_{{{d}}}$'] = pd.Series(dx, index=idx)
+            diffs_y[f'$t_{{{d}}}$'] = pd.Series(dy, index=idx)
+
+        else:
+            idx = [depth_int]
+            diffs_x[f'$t_{{{d}}}$'] = pd.Series(np.array([np.nan]*len(idx)), index=idx)
+            diffs_y[f'$t_{{{d}}}$'] = pd.Series(np.array([np.nan]*len(idx)), index=idx)
+            
+    
+    # now construct your DataFrames simply by passing the dict-of-series:
+    df_X_all = pd.DataFrame(diffs_x)
+    df_Y_all = pd.DataFrame(diffs_y)
+    
+    for ref_day in range(num //2, len(dic) - num //2):
+    
+        df_X = df_X_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
+        df_Y = df_Y_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
+        
+        # Calculation of variability at each depth
+        df_data = pd.DataFrame()
+        df_data[r'$\Delta x$'] = df_X.mean(axis=1)
+        df_data[r'$\Delta y$'] = df_Y.mean(axis=1)
+        df_data[r'$\sum{\Delta x}$'] = df_data[r'$\Delta x$'].cumsum()
+        df_data[r'$\sum{\Delta y}$'] = df_data[r'$\Delta y$'].cumsum()
+        df_data[r'$\sigma^2_{\Delta x}$'] = df_X.var(axis=1)
+        df_data[r'$\sigma^2_{\Delta y}$'] = df_Y.var(axis=1)
+        df_data[r'Total $\sigma^2$'] = df_data[r'$\sigma^2_{\Delta x}$'] + df_data[r'$\sigma^2_{\Delta y}$']
+        df_data['weight'] = 1 / df_data[r'Total $\sigma^2$']
+        df_data['Depth'] = df_data.index 
+        df_data
+        
+        # Line of Best Fit
+        
+        # your data arrays of shape (N,)
+        x = df_data[r'$\sum{\Delta x}$'].values
+        y = df_data[r'$\sum{\Delta y}$'].values
+        z = df_data['Depth'].values
+        w = df_data['weight'].values
+        
+        # 1. compute weighted mean
+        W = np.sum(w)
+        mean = np.array([np.dot(w, x),
+                         np.dot(w, y),
+                         np.dot(w, z)]) / W
+        
+        # 2. center and weight the data
+        X = np.vstack((x, y, z)).T
+        Xc = X - mean
+        Xw = Xc * np.sqrt(w)[:, None]
+        
+        # 3. SVD on weighted, centered data
+        try:
+            flag = 0
+            _, _, Vt = np.linalg.svd(Xw, full_matrices=False)
+        except Exception:
+            flag = 1
+            # print(f"Eddy{eddy} on day {list(dic.keys())[ref_day][3:]} did not have a measurable profile")
+            
+        if flag:
+            
+            df_tilt_data.loc[len(df_tilt_data)] = {'Eddy': eddy, 'Day': list(dic.keys())[ref_day][3:], 'TiltDis': np.nan, 'TiltDir': np.nan}
+            
+        else:
+            
+            direction = Vt[0]   # principal axis
+            
+            # The best-fit line is:  p(t) = mean + t * direction
+            t = np.linspace((np.max(z)-mean[2])/direction[2], (np.min(z)-mean[2])/direction[2], 2)            # shape (100,)
+            p = mean[None, :] + t[:, None] * direction  # shape (100,3)
+            # or equivalently
+            p = mean + np.outer(t, direction)          # also (100,3)
+            
+            # then split back out if you need x,y,z separately:
+            x_line, y_line, z_line = p.T
+            
+            tilt_dist = np.hypot(x_line[0]-x_line[1], y_line[0]-y_line[1])
+            
+            top_idx = np.where(np.abs(z_line)==np.min(np.abs(z_line)))[0][0]
+            if top_idx == 1:
+                btm_idx = 0
+            else:
+                btm_idx = 1
+            top = [x_line[top_idx], y_line[top_idx], z_line[top_idx]]
+            btm = [x_line[btm_idx], y_line[btm_idx], z_line[btm_idx]]
+            tilt_direc = ( bearing(btm, top) + 20 ) % 360
+        
+            df_tilt_data.loc[len(df_tilt_data)] = {'Eddy': eddy, 'Day': list(dic.keys())[ref_day][3:], 'TiltDis': tilt_dist, 'TiltDir': tilt_direc}
+        
+    df_tilt_data['Day'] = df_tilt_data['Day'].astype(int)
+        
+    return df_tilt_data
 
 
 
