@@ -46,8 +46,8 @@ def calculate_eddy(width=500e3, num_depth_layers=21, eta0=1, L=1e5, H=1000,
     sigma -= sigma.mean()
 
     dx, dy = x[1]-x[0], y[1]-y[0]
-    dsdx = np.gradient(sigma, dx, axis=0)
-    dsdy = np.gradient(sigma, dy, axis=1)
+    dsdx = np.gradient(sigma, dx, axis=0, edge_order=2)
+    dsdy = np.gradient(sigma, dy, axis=1, edge_order=2)
 
     U =  g/f0 * dsdy * taper
     V = -g/f0 * dsdx * taper
@@ -548,7 +548,7 @@ def bearing(a, b):
     bearing = (angle_deg + 360) % 360
     return bearing
 
-def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
+def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000, var='Depth'):
     
     df_tilt_data = pd.DataFrame(columns=['Eddy', 'Day', 'TiltDis', 'TiltDir'])
     
@@ -558,10 +558,11 @@ def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
     for d, day in enumerate(dic.keys()):
     
         df = dic[day].copy()
-        df['Depth'] = -df['Depth']
-        df = df[df['Depth'] <= max_depth]
+        if var == 'Depth':
+            df[var] = -df[var]
+        df = df[df[var] <= max_depth]
         # don’t drop rows — keep all depths, even if x or y are NaN
-        df = df.set_index('Depth').sort_index()
+        df = df.set_index(var).sort_index()
 
         if len(df):
             depths = df.index.values
@@ -599,6 +600,10 @@ def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
     
         df_X = df_X_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
         df_Y = df_Y_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
+
+        if var == 'rho': # rhos are not lined up nicely like depths.
+            df_X = df_X.dropna()
+            df_Y = df_Y.dropna()
         
         # Calculation of variability at each depth
         df_data = pd.DataFrame()
@@ -610,7 +615,7 @@ def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
         df_data[r'$\sigma^2_{\Delta y}$'] = df_Y.var(axis=1)
         df_data[r'Total $\sigma^2$'] = df_data[r'$\sigma^2_{\Delta x}$'] + df_data[r'$\sigma^2_{\Delta y}$']
         df_data['weight'] = 1 / df_data[r'Total $\sigma^2$']
-        df_data['Depth'] = df_data.index 
+        df_data[var] = df_data.index 
         df_data
         
         # Line of Best Fit
@@ -618,7 +623,7 @@ def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
         # your data arrays of shape (N,)
         x = df_data[r'$\sum{\Delta x}$'].values
         y = df_data[r'$\sum{\Delta y}$'].values
-        z = df_data['Depth'].values
+        z = df_data[var].values
         w = df_data['weight'].values
         
         # 1. compute weighted mean
@@ -638,7 +643,6 @@ def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
             _, _, Vt = np.linalg.svd(Xw, full_matrices=False)
         except Exception:
             flag = 1
-            # print(f"Eddy{eddy} on day {list(dic.keys())[ref_day][3:]} did not have a measurable profile")
             
         if flag:
             
@@ -649,10 +653,10 @@ def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000):
             direction = Vt[0]   # principal axis
             
             # The best-fit line is:  p(t) = mean + t * direction
-            t = np.linspace((np.max(z)-mean[2])/direction[2], (np.min(z)-mean[2])/direction[2], 2)            # shape (100,)
-            p = mean[None, :] + t[:, None] * direction  # shape (100,3)
+            t = np.linspace((np.max(z)-mean[2])/direction[2], (np.min(z)-mean[2])/direction[2], 2)    
+            p = mean[None, :] + t[:, None] * direction  
             # or equivalently
-            p = mean + np.outer(t, direction)          # also (100,3)
+            p = mean + np.outer(t, direction)          
             
             # then split back out if you need x,y,z separately:
             x_line, y_line, z_line = p.T
@@ -912,6 +916,21 @@ def deg_to_m(lat):
     R = 6371000
     rad = np.radians(lat)
     return (np.pi/180)*R*np.sqrt((np.cos(rad))**2 + 1)
+
+def find_icjc(x, y, X_grid, Y_grid):
+    from scipy.spatial import cKDTree
+    tree = cKDTree(np.column_stack((X_grid.ravel(), Y_grid.ravel())))
+    xcs = np.asarray(x, dtype=float)
+    ycs = np.asarray(y, dtype=float)
+    valid = np.isfinite(xcs) & np.isfinite(ycs)
+    ics = np.full(xcs.shape, -1, dtype=int)
+    jcs = np.full(ycs.shape, -1, dtype=int)
+    if valid.any():
+        _, ind = tree.query(np.column_stack((xcs[valid], ycs[valid])))
+        ii, jj = np.unravel_index(ind, X_grid.shape)
+        ics[valid] = ii
+        jcs[valid] = jj
+    return ics, jcs
 
 def nencioli(u, v, lon, lat, a, b):
     """
