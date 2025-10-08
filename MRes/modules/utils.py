@@ -71,8 +71,8 @@ def calculate_eddy_2D(width=500000, L=1e5, f0=None, rho0=1025, q11=1., q22=1., q
     y = np.linspace(-width // 2, width // 2, 101)
     x_2d, y_2d = np.meshgrid(x, y, indexing='ij')
     
-    x_c = 0
-    y_c = 0
+    x_c = 0.0
+    y_c = 0.0
 
     X = np.stack([x_2d - x_c, y_2d - y_c], axis=0) 
     Q = np.array([[q11, q12], [q12, q22]]) 
@@ -139,7 +139,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     
 
 ################################################ ESP Methods ################################################
-def moca(l, VT, VN):
+def moca(l, VT, VN, Rc_max=1e3):
 
     if np.any(np.isnan(VT)):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
@@ -179,33 +179,33 @@ def moca(l, VT, VN):
     r0 = a / c
     w = 2 * c
 
-    Q11, Q12, Q22 = w/4, 0, w/4
-    Q = np.array([[Q11, Q12], [Q12, Q22]])
-    xi, yi, ui, vi = l, [0]*len(l), VT, VN
     xc, yc = l0, r0
 
-    psi0 = find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22)
+    Aq11, Aq12, Aq22 = w/4, 0, w/4
+    AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
+    A = np.sign(w)*np.sqrt(np.abs(np.linalg.det(AQ))) 
+    Q = AQ / A
+    q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
-    Rc = calc_tang_vel_max_r(xc, yc, xi, yi, ui, vi)
+    xi, yi, ui, vi = l, [0]*len(l), VT, VN
+    
+    Rc, r2 = Rc_finder(xi, yi, ui, vi, xc, yc,
+                   q11, q12, q22, A, upperbound=Rc_max)
+    psi0 = - A * Rc**2
 
-    s = -Rc**2/psi0
-    q = s*Q
+    return l0, r0, w, Q, Rc, psi0
 
-    return l0, r0, w, Q, Rc, psi0, q
-
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3):
 
     if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
         return (
             np.nan, 
             np.nan,
-            np.nan,   
+            np.nan,
             nan2, 
-            np.nan,   
+            np.nan,
             np.nan, 
-            nan2
         )
     
     def find_root(x, y, degree=3):
@@ -258,18 +258,22 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     beta  = B0 if r2B > r2D else D0
     gamma = A1 if r2A > r2D else -D1
     
-    Q11 = B1 / 2
-    Q22 = -C1 / 2
-    Q12 = -gamma / 2
+    Aq11 = B1 / 2
+    Aq22 = -C1 / 2
+    Aq12 = -gamma / 2
     denom = C1 * B1 + gamma**2
     if denom == 0:
         raise ZeroDivisionError("Denominator is zero.")
         
     xc = - (alpha * gamma + beta * C1) / denom  + center_x
     yc = (beta * gamma - alpha * B1) / denom + center_y
-    w = 2 * (Q11 + Q22)
+    w = 2 * (Aq11 + Aq22)
 
-    Q = np.array([[Q11, Q12], [Q12, Q22]])
+    AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
+
+    A = np.sign(w)*np.sqrt(np.abs(np.linalg.det(AQ))) 
+    Q = AQ / A
+    q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
     # Remove duplicates from (x1, y1, u1, v1)
     mask = ~np.array([(x, y) in common_points for x, y in zip(x1, y1)])
@@ -277,36 +281,23 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2):
     y1f = y1[mask]
     u1f = u1[mask]
     v1f = v1[mask]
-    
     # Concatenate with unaltered second set
     xi = np.concatenate([x1f, x2])
     yi = np.concatenate([y1f, y2])
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
+    
+    Rc, r2 = Rc_finder(x1, y1, u1, v1, xc, yc,
+                       q11, q12, q22, A, upperbound=Rc_max)
+    psi0 = - A * Rc**2
 
-    psi0 = find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22)
+    return xc, yc, w, Q, Rc, psi0
 
-    Rc = calc_tang_vel_max_r(xc, yc, xi, yi, ui, vi)
 
-    s = -Rc**2/psi0
-    q = s*Q
-
-    return xc, yc, w, Q, Rc, psi0, q
-
-def espra(xi, yi, ui, vi):
-
-    if np.any(np.isnan(ui)):
-        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-        return (
-            np.nan, 
-            np.nan,
-            np.nan,   
-            nan2, 
-            np.nan,   
-            np.nan,  
-            nan2
-        )
+def espra(xi, yi, ui, vi, Rc_max=1e3):
+    xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
+    mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
+    xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
     
     from scipy.optimize import least_squares
 
@@ -323,23 +314,21 @@ def espra(xi, yi, ui, vi):
         result = least_squares(residuals, params_init, args=(x, y, u_i, v_i))
         return result.x 
 
-    xc, yc, Q11, Q12, Q22 = fit_params(xi, yi, ui, vi)
+    xc, yc, Aq11, Aq12, Aq22 = fit_params(xi, yi, ui, vi)
 
-    w = 2*(Q11 + Q22)
+    w = 2*(Aq11 + Aq22)
 
-    Q = np.array([[Q11, Q12], [Q12, Q22]])
+    AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
 
-    psi0 = find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22)
+    A = np.sign(w)*np.sqrt(np.abs(np.linalg.det(AQ))) 
+    Q = AQ / A
+    q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
-    Rc = calc_tang_vel_max_r(xc, yc, xi, yi, ui, vi)
+    Rc, r2 = Rc_finder(xi, yi, ui, vi, xc, yc,
+                   q11, q12, q22, A, upperbound=Rc_max)
+    psi0 = - A * Rc**2
 
-    s = -Rc**2/psi0
-    q = s*Q
-
-    return xc, yc, w, Q, Rc, psi0, q
-
-
+    return xc, yc, w, Q, Rc, psi0
 
 
 
@@ -348,63 +337,92 @@ def espra(xi, yi, ui, vi):
 
 
 
-# Finding psi0
-def find_optimal_psi0(xi, yi, ui, vi,
-                      xc, yc, Q11, Q12, Q22,
-                      bounds=(1e-6, 1e6),
-                      method='bounded',
-                      exp_clip=700):
-    from scipy.optimize import minimize_scalar
-    """
-    Estimate the ψ₀ that minimises
-      R1(ψ₀) = Σ_i [ (u_i + β_i e^{γ_i/ψ₀})^2 + (v_i - α_i e^{γ_i/ψ₀})^2 ],
-    where
-      γ_i = Q11·dx² + 2·Q12·dx·dy + Q22·dy²,
-      α_i = 2·Q11·dx + 2·Q12·dy,
-      β_i = 2·Q22·dy + 2·Q12·dx.
-    """
-    if np.isnan(Q11):
-        return np.nan
-    sign = 'positive' if Q11 < 0 else 'negative'
-    
-    xi = np.asarray(xi, dtype=np.float64)
-    yi = np.asarray(yi, dtype=np.float64)
-    ui = np.asarray(ui, dtype=np.float64)
-    vi = np.asarray(vi, dtype=np.float64)
 
-    dx = xi - xc
-    dy = yi - yc
-    gamma = Q11*dx**2 + 2*Q12*dx*dy + Q22*dy**2
-    alpha = 2*Q11*dx + 2*Q12*dy
-    beta  = 2*Q22*dy + 2*Q12*dx
 
-    def obj(psi0):
-        # Stable exponent
-        z = np.clip(gamma / psi0, -exp_clip, exp_clip)
-        E = np.exp(z)
-        u_pred = -beta * E
-        v_pred =  alpha * E
-        s = np.sum((ui - u_pred)**2 + (vi - v_pred)**2)
-        # Penalise any non-finite objective (keeps optimiser sane)
-        return s if np.isfinite(s) else 1e300
-
-    def solve_on_interval(lo, hi):
-        return minimize_scalar(obj, bounds=(lo, hi), method=method)
-
-    # Choose intervals
-    if sign == 'positive':
-        candidates = [solve_on_interval(bounds[0], bounds[1])]
-    elif sign == 'negative':
-        candidates = [solve_on_interval(-bounds[1], -bounds[0])]
-    else:  # auto: try both and pick the best
-        r_pos = solve_on_interval(bounds[0],  bounds[1])
-        r_neg = solve_on_interval(-bounds[1], -bounds[0])
-        candidates = [r_pos, r_neg]
-
-    best = min(candidates, key=lambda r: r.fun if np.isfinite(r.fun) else np.inf)
-    return best.x
 
 # Finding Rc
+# def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=200):
+#     from scipy.optimize import minimize_scalar
+#     dx, dy = xi - xc, yi - yc
+#     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+
+#     def residual(Rc):
+#         exp_term = np.exp(-rho2 / Rc**2)
+#         u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
+#         v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
+#         return np.sum((ui - u_model)**2 + (vi - v_model)**2)
+
+#     res = minimize_scalar(residual, bounds=(1e-3, upperbound), method='bounded')
+#     return res.x
+
+def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
+    Q = np.asarray(Q, float)
+    if Q.shape == (3,):
+        q11, q12, q22 = Q
+        Q = np.array([[q11, q12], [q12, q22]], float)
+    if det1:
+        d = np.linalg.det(Q)
+        if d != 0:
+            Q /= np.sqrt(d)
+
+    xp, yp, up, vp = (np.asarray(a, float) for a in (xp, yp, up, vp))
+    r   = np.stack((xp - xc, yp - yc), axis=-1)
+    g   = 2.0 * (r @ Q.T)                    # ∇F
+    J   = np.array([[0., -1.], [1., 0.]])    # +90° rot
+    tau = g @ J.T                             # tangent
+    nrm = np.linalg.norm(tau, axis=-1, keepdims=True)
+    t_hat = np.divide(tau, nrm, out=np.zeros_like(tau), where=nrm > 0)
+
+    vel = np.stack((up, vp), axis=-1)
+    vt  = np.sum(vel * t_hat, axis=-1)
+    vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
+    return vt
+
+
+import matplotlib.pyplot as plt
+def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=2):
+    from scipy.optimize import minimize
+
+    xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
+
+    dx, dy = xi - xc, yi - yc
+    rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+
+    vt = np.abs(tangential_velocity(xi, yi, ui, vi, xc, yc,
+                                    np.array([[q11, q12],[q12, q22]])))
+    idx_max_vt = np.argmax(vt)
+    rho_max = np.sqrt(rho2[idx_max_vt]) if rho2[idx_max_vt] >= 0 else np.nan
+    Rc_0 = rho_max * np.sqrt(2)
+
+    # plt.figure()
+    # plt.scatter(rho2, vt, marker='.', s=5)
+    # plt.show()
+
+    def residual(Rc):
+        Rc = Rc[0]
+        exp_term = np.exp(-rho2 / Rc**2)
+        u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
+        v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
+        return np.sum((ui - u_model)**2 + (vi - v_model)**2)
+
+    res = minimize(residual, x0=[Rc_0], bounds=[(1e-3, upperbound)], method='L-BFGS-B')
+    Rc_opt = res.x[0]
+
+    if Rc_opt < Rc_0 / tol_factor or Rc_opt > Rc_0 * tol_factor:
+        Rc_opt = Rc_0
+
+    exp_term = np.exp(-rho2 / Rc_opt**2)
+    u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
+    v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
+
+    obs = np.concatenate([ui, vi])
+    model = np.concatenate([u_model, v_model])
+    ss_res = np.sum((obs - model)**2)
+    ss_tot = np.sum((obs - np.mean(obs))**2)
+    r2 = 1 - ss_res / ss_tot
+
+    return Rc_opt, r2
+
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
     up, vp = np.asarray(up), np.asarray(vp)
@@ -415,7 +433,7 @@ def calc_tang_vel(xc, yc, xp, yp, up, vp):
     v_theta = np.where(r>0, v_theta, 0.0)
     return v_theta
 
-def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp, cyc=None):
+def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp, cyc=None): 
     xp, yp = np.asarray(xp), np.asarray(yp)
     up, vp = np.asarray(up), np.asarray(vp)
     dx = xp - xc
@@ -447,7 +465,7 @@ def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp, cyc=None):
     
     return r_peak
 
-def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False):
+def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False): # what I used for the clim
     """
     Returns dict of 'up','right','down','left' where each value is either:
       - steps from (nic,njc) where |v_theta| stops growing (return_index=True), or
@@ -709,7 +727,12 @@ def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000, var='Depth
 
 
 
-
+def unit_det(Q, symmetrize=True):
+    Q = np.asarray(Q, dtype=float)
+    d = np.linalg.det(Q)
+    if not np.isfinite(d) or d <= 0: raise ValueError("det(Q) must be positive and finite")
+    s = 1/np.sqrt(d)
+    return s*Q, s
 
 def gaussian_vel_reconstruction(xc, yc, q11, q12, q22, Rc, psi0, X=None, Y=None):
 
