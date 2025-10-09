@@ -139,7 +139,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     
 
 ################################################ ESP Methods ################################################
-def moca(l, VT, VN, Rc_max=1e3, plot_flag=False):
+def moca(l, VT, VN, Rc_max=1e3, plot_flag=False, A_flag=False):
 
     if np.any(np.isnan(VT)):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
@@ -193,9 +193,12 @@ def moca(l, VT, VN, Rc_max=1e3, plot_flag=False):
                    q11, q12, q22, A, upperbound=Rc_max, plot_flag=plot_flag)
     psi0 = - A * Rc**2
 
+    if A_flag:
+        return xc, yc, w, Q, Rc, psi0, A
+
     return l0, r0, w, Q, Rc, psi0
 
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=False):
 
     if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
@@ -291,10 +294,13 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False):
                        q11, q12, q22, A, upperbound=Rc_max, plot_flag=plot_flag)
     psi0 = - A * Rc**2
 
+    if A_flag:
+        return xc, yc, w, Q, Rc, psi0, A
+
     return xc, yc, w, Q, Rc, psi0
 
 
-def espra(xi, yi, ui, vi, Rc_max=1e3, plot_flag=False):
+def espra(xi, yi, ui, vi, Rc_max=1e3, plot_flag=False, A_flag=False):
     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
     mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
     xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
@@ -327,6 +333,9 @@ def espra(xi, yi, ui, vi, Rc_max=1e3, plot_flag=False):
     Rc, r2 = Rc_finder(xi, yi, ui, vi, xc, yc,
                    q11, q12, q22, A, upperbound=Rc_max, plot_flag=plot_flag)
     psi0 = - A * Rc**2
+
+    if A_flag:
+        return xc, yc, w, Q, Rc, psi0, A
 
     return xc, yc, w, Q, Rc, psi0
 
@@ -378,10 +387,9 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-
-import matplotlib.pyplot as plt
 def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=2, plot_flag=False):
     from scipy.optimize import minimize
+    import matplotlib.pyplot as plt
 
     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
 
@@ -413,23 +421,27 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_fact
     u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
     v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
 
-    if plot_flag:
-        plt.figure()
-        plt.scatter(rho2, vt, marker='.', s=5)
-
-        if optimal_found:
-            Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
-            vt_theo = 2*np.abs(A)*np.exp(-rho2/Rc_opt**2)*Qr
-            plt.plot(rho2, vt_theo, color='r')
-        else:
-            plt.scatter(rho_max**2, vt[idx_max_vt], color='r')
-        plt.show()    
-
     obs = np.concatenate([ui, vi])
     model = np.concatenate([u_model, v_model])
     ss_res = np.sum((obs - model)**2)
     ss_tot = np.sum((obs - np.mean(obs))**2)
     r2 = 1 - ss_res / ss_tot
+
+    if plot_flag:
+        plt.figure()
+        plt.scatter(rho2, vt, marker='.', s=5)
+        if optimal_found:
+            x = np.linspace(np.min(xi), np.max(xi), 50)
+            y = np.linspace(np.min(yi), np.max(yi), 50)
+            dx, dy = x - xc, y - yc
+            rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+            Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
+            vt_theo = 2*np.abs(A)*np.exp(-rho2/Rc_opt**2)*Qr
+            plt.plot(rho2, vt_theo, color='r')
+            plt.title(fr'$r^2={r2}$')
+        else:
+            plt.scatter(rho_max**2, vt[idx_max_vt], color='r')
+        plt.show()    
 
     return Rc_opt, r2
 
@@ -932,6 +944,34 @@ def smooth(x, y, num=1000, window=100):
     x_smooth = f_smooth(y)
 
     return x_smooth
+
+def robust_smooth(y, x, win=5, poly=3, k=3.5, s=None):
+    from scipy.signal import savgol_filter
+    from scipy.interpolate import UnivariateSpline
+    i = np.argsort(y); y0, x0 = y[i], x[i]
+    x1 = savgol_filter(x0, win|1, poly, mode='interp')
+    r = x0 - x1
+    mad = np.median(np.abs(r - np.median(r))) + 1e-12
+    mask = np.abs(r) <= k*1.4826*mad
+    spl = UnivariateSpline(y0[mask], x0[mask], s=s)
+    return spl(y0), y0, x0
+
+# def robust_smooth(y, x, win=5, poly=3, k=3.5, s=None):
+#     from scipy.signal import savgol_filter
+#     from scipy.interpolate import UnivariateSpline
+#     i = np.argsort(y)
+#     y0, x0 = np.asarray(y)[i], np.asarray(x)[i]
+#     m = np.isfinite(y0) & np.isfinite(x0)
+#     if m.sum() < 3: return np.full_like(y0, np.nan), y0, x0
+#     y1, x1 = y0[m], x0[m]
+#     win = min(max((win|1), poly+2), len(y1)-(len(y1)+1)%2)
+#     r = x1 - savgol_filter(x1, win, poly, mode='interp')
+#     mad = np.median(np.abs(r - np.median(r))) + 1e-12
+#     mask = np.abs(r - np.median(r)) <= k*1.4826*mad
+#     spl = UnivariateSpline(y1[mask], x1[mask], s=s)
+#     out = np.full_like(y0, np.nan)
+#     out[m] = spl(y0[m])
+#     return out, y0, x0
 
 def normalize_matrix(matrix, mask_value=np.nan):
     valid_mask = np.where(matrix == mask_value, 0, 1)
