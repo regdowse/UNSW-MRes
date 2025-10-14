@@ -141,17 +141,31 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
 ################################################ ESP Methods ################################################
 def moca(l, VT, VN, Rc_max=1e3, plot_flag=False, A_flag=False):
 
-    if np.any(np.isnan(VT)):
+    l, VT, VN = [np.asarray(a) for a in (l, VT, VN)]
+    mask = ~np.isnan(l) & ~np.isnan(VT) & ~np.isnan(VT)
+    l, VT, VN = l[mask], VT[mask], VN[mask]
+
+    if len(l) == 0:
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-        return (
-            np.nan,
-            np.nan,  
-            np.nan,  
-            nan2,  
-            np.nan,  
-            np.nan,
-            nan2
-        )
+        if A_flag:
+            return (
+                np.nan,
+                np.nan,  
+                np.nan,  
+                nan2,  
+                np.nan,  
+                np.nan,
+                nan2
+            )
+        else:
+            return (
+                np.nan,
+                np.nan,  
+                np.nan,  
+                nan2,  
+                np.nan,  
+                np.nan
+            )
     
     def find_root(x, y):
         coeffs = np.polyfit(x, y, 3)
@@ -190,7 +204,8 @@ def moca(l, VT, VN, Rc_max=1e3, plot_flag=False, A_flag=False):
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     
     Rc, r2 = Rc_finder(xi, yi, ui, vi, xc, yc,
-                   q11, q12, q22, A, upperbound=Rc_max, plot_flag=plot_flag)
+                   q11, q12, q22, A,
+                       upperbound=Rc_max, plot_flag=plot_flag)
     psi0 = - A * Rc**2
 
     if A_flag:
@@ -200,16 +215,35 @@ def moca(l, VT, VN, Rc_max=1e3, plot_flag=False, A_flag=False):
 
 def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=False):
 
-    if np.any(np.isnan(u1)) or np.any(np.isnan(u2)):
+    x1, y1, u1, v1 = [np.asarray(a) for a in (x1, y1, u1, v1)]
+    mask = ~np.isnan(x1) & ~np.isnan(y1) & ~np.isnan(u1) & ~np.isnan(v1)
+    x1, y1, u1, v1 = x1[mask], y1[mask], u1[mask], v1[mask]
+
+    x2, y2, u2, v2 = [np.asarray(a) for a in (x2, y2, u2, v2)]
+    mask = ~np.isnan(x2) & ~np.isnan(y2) & ~np.isnan(u2) & ~np.isnan(v2)
+    x2, y2, u2, v2 = x2[mask], y2[mask], u2[mask], v2[mask]
+    
+    if (len(x1) == 0) &  (len(x2) == 0):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-        return (
-            np.nan, 
-            np.nan,
-            np.nan,
-            nan2, 
-            np.nan,
-            np.nan, 
-        )
+        if A_flag:
+            return (
+                np.nan,
+                np.nan,  
+                np.nan,  
+                nan2,  
+                np.nan,  
+                np.nan,
+                nan2
+            )
+        else:
+            return (
+                np.nan,
+                np.nan,  
+                np.nan,  
+                nan2,  
+                np.nan,  
+                np.nan
+            )
     
     def find_root(x, y, degree=3):
         """Fit a degree-3 polynomial to (x, y) and return the real root closest to x's midpoint."""
@@ -231,18 +265,18 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=F
     points2 = set(zip(x2, y2))
     common_points = points1 & points2
     
-    if len(common_points) != 1:
-        print(f"Warning: Expected 1 common point, found {len(common_points)}.")
-        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-        return (
-            np.nan, 
-            np.nan,
-            np.nan,   
-            nan2, 
-            np.nan,   
-            np.nan, 
-            nan2
-        )
+    # if len(common_points) != 1:
+    #     print(f"Warning: Expected 1 common point, found {len(common_points)}.")
+    #     nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
+    #     return (
+    #         np.nan, 
+    #         np.nan,
+    #         np.nan,   
+    #         nan2, 
+    #         np.nan,   
+    #         np.nan, 
+    #         nan2
+    #     ) 
     
     center_x, center_y = next(iter(common_points))
 
@@ -291,7 +325,8 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=F
     vi = np.concatenate([v1f, v2])
     
     Rc, r2 = Rc_finder(x1, y1, u1, v1, xc, yc,
-                       q11, q12, q22, A, upperbound=Rc_max, plot_flag=plot_flag)
+                       q11, q12, q22, A,
+                       upperbound=Rc_max, plot_flag=plot_flag)
     psi0 = - A * Rc**2
 
     if A_flag:
@@ -331,7 +366,8 @@ def espra(xi, yi, ui, vi, Rc_max=1e3, plot_flag=False, A_flag=False):
     q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
     Rc, r2 = Rc_finder(xi, yi, ui, vi, xc, yc,
-                   q11, q12, q22, A, upperbound=Rc_max, plot_flag=plot_flag)
+                   q11, q12, q22, A,
+                       upperbound=Rc_max, plot_flag=plot_flag)
     psi0 = - A * Rc**2
 
     if A_flag:
@@ -387,11 +423,13 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=2, plot_flag=False):
+def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=5, plot_flag=False):
     from scipy.optimize import minimize
     import matplotlib.pyplot as plt
 
     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
+    mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
+    xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
 
     dx, dy = xi - xc, yi - yc
     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
@@ -438,6 +476,7 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_fact
             Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
             vt_theo = 2*np.abs(A)*np.exp(-rho2/Rc_opt**2)*Qr
             plt.plot(rho2, vt_theo, color='r')
+            plt.scatter(0, 0, color='g', marker='o', s=5)
             plt.title(fr'$r^2={r2}$')
         else:
             plt.scatter(rho_max**2, vt[idx_max_vt], color='r')
