@@ -265,18 +265,28 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=F
     points2 = set(zip(x2, y2))
     common_points = points1 & points2
     
-    # if len(common_points) != 1:
-    #     print(f"Warning: Expected 1 common point, found {len(common_points)}.")
-    #     nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-    #     return (
-    #         np.nan, 
-    #         np.nan,
-    #         np.nan,   
-    #         nan2, 
-    #         np.nan,   
-    #         np.nan, 
-    #         nan2
-    #     ) 
+    if len(common_points) != 1:
+        print(f"Warning: Expected 1 common point, found {len(common_points)}.")
+        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
+        if A_flag:
+            return (
+                np.nan,
+                np.nan,  
+                np.nan,  
+                nan2,  
+                np.nan,  
+                np.nan,
+                nan2
+            )
+        else:
+            return (
+                np.nan,
+                np.nan,  
+                np.nan,  
+                nan2,  
+                np.nan,  
+                np.nan
+            )
     
     center_x, center_y = next(iter(common_points))
 
@@ -312,7 +322,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=F
     Q = AQ / A
     q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
-    # Remove duplicates from (x1, y1, u1, v1)
+    # Remove duplicates (i.e., the center) from (x1, y1, u1, v1)
     mask = ~np.array([(x, y) in common_points for x, y in zip(x1, y1)])
     x1f = x1[mask]
     y1f = y1[mask]
@@ -386,20 +396,6 @@ def espra(xi, yi, ui, vi, Rc_max=1e3, plot_flag=False, A_flag=False):
 
 
 # Finding Rc
-# def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=200):
-#     from scipy.optimize import minimize_scalar
-#     dx, dy = xi - xc, yi - yc
-#     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-
-#     def residual(Rc):
-#         exp_term = np.exp(-rho2 / Rc**2)
-#         u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
-#         v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
-#         return np.sum((ui - u_model)**2 + (vi - v_model)**2)
-
-#     res = minimize_scalar(residual, bounds=(1e-3, upperbound), method='bounded')
-#     return res.x
-
 def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     Q = np.asarray(Q, float)
     if Q.shape == (3,):
@@ -483,6 +479,23 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_fact
         plt.show()    
 
     return Rc_opt, r2
+
+
+
+# def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=5, plot_flag=False):
+#     # q11, q12, q22 = Q[0,0], Q[0,1], Q[1,1]
+#     Q = np.array([[q11, q12], [q12, q22]])
+#     dx, dy = xi - xc, yi - yc
+#     vt = np.abs(tangential_velocity(xi, yi, ui, vi, xc, yc, Q))
+#     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+#     Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
+#     c = 2*np.abs(A)
+#     y = vt/(c*Qr + 1e-300)
+#     m = np.isfinite(y) & np.isfinite(rho2) & (y > 0)
+#     x, z = rho2[m], np.log(y[m])
+#     s = (x @ z) / (x @ x)
+#     return np.sqrt(-1/s) if s < 0 else np.nan, np.nan
+
 
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
