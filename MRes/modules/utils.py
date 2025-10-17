@@ -139,7 +139,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     
 
 ################################################ ESP Methods ################################################
-def moca(l, VT, VN, Rc_max=1e3, plot_flag=False, A_flag=False):
+def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
 
     l, VT, VN = [np.asarray(a) for a in (l, VT, VN)]
     mask = ~np.isnan(l) & ~np.isnan(VT) & ~np.isnan(VT)
@@ -147,25 +147,16 @@ def moca(l, VT, VN, Rc_max=1e3, plot_flag=False, A_flag=False):
 
     if len(l) == 0:
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-        if A_flag:
-            return (
-                np.nan,
-                np.nan,  
-                np.nan,  
-                nan2,  
-                np.nan,  
-                np.nan,
-                nan2
-            )
-        else:
-            return (
-                np.nan,
-                np.nan,  
-                np.nan,  
-                nan2,  
-                np.nan,  
-                np.nan
-            )
+        return (
+            np.nan,
+            np.nan,  
+            np.nan,  
+            nan2,  
+            np.nan,  
+            np.nan,
+            nan2
+        )
+
     
     def find_root(x, y):
         coeffs = np.polyfit(x, y, 3)
@@ -195,25 +186,22 @@ def moca(l, VT, VN, Rc_max=1e3, plot_flag=False, A_flag=False):
 
     xc, yc = l0, r0
 
-    Aq11, Aq12, Aq22 = w/4, 0, w/4
+    Aq11, Aq12, Aq22 = w/4, 0.0, w/4
     AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
     A = np.sign(w)*np.sqrt(np.abs(np.linalg.det(AQ))) 
     Q = AQ / A
-    q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
+    q11, q12, q22 = Q[0,0], 0.0, Q[1,1]
 
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     
-    Rc, r2 = Rc_finder(xi, yi, ui, vi, xc, yc,
+    Rc_opt, psi0_opt, A_opt = Rc_finder(xi, yi, ui, vi, xc, yc,
                    q11, q12, q22, A,
                        upperbound=Rc_max, plot_flag=plot_flag)
-    psi0 = - A * Rc**2
+    # psi0 = - A * Rc**2
 
-    if A_flag:
-        return xc, yc, w, Q, Rc, psi0, A
+    return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
-    return l0, r0, w, Q, Rc, psi0
-
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=False):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
 
     x1, y1, u1, v1 = [np.asarray(a) for a in (x1, y1, u1, v1)]
     mask = ~np.isnan(x1) & ~np.isnan(y1) & ~np.isnan(u1) & ~np.isnan(v1)
@@ -225,26 +213,16 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=F
     
     if (len(x1) == 0) &  (len(x2) == 0):
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-        if A_flag:
-            return (
-                np.nan,
-                np.nan,  
-                np.nan,  
-                nan2,  
-                np.nan,  
-                np.nan,
-                nan2
-            )
-        else:
-            return (
-                np.nan,
-                np.nan,  
-                np.nan,  
-                nan2,  
-                np.nan,  
-                np.nan
-            )
-    
+        return (
+            np.nan,
+            np.nan,  
+            np.nan,  
+            nan2,  
+            np.nan,  
+            np.nan,
+            nan2
+        )
+
     def find_root(x, y, degree=3):
         """Fit a degree-3 polynomial to (x, y) and return the real root closest to x's midpoint."""
         coeffs = np.polyfit(x, y, degree)
@@ -268,26 +246,16 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=F
     if len(common_points) != 1:
         print(f"Warning: Expected 1 common point, found {len(common_points)}.")
         nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
-        if A_flag:
-            return (
-                np.nan,
-                np.nan,  
-                np.nan,  
-                nan2,  
-                np.nan,  
-                np.nan,
-                nan2
-            )
-        else:
-            return (
-                np.nan,
-                np.nan,  
-                np.nan,  
-                nan2,  
-                np.nan,  
-                np.nan
-            )
-    
+        return (
+            np.nan,
+            np.nan,  
+            np.nan,  
+            nan2,  
+            np.nan,  
+            np.nan,
+            nan2
+        )
+
     center_x, center_y = next(iter(common_points))
 
     xx = x1 - center_x
@@ -334,18 +302,15 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e3, plot_flag=False, A_flag=F
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
     
-    Rc, r2 = Rc_finder(x1, y1, u1, v1, xc, yc,
+    Rc_opt, psi0_opt, A_opt = Rc_finder(x1, y1, u1, v1, xc, yc,
                        q11, q12, q22, A,
                        upperbound=Rc_max, plot_flag=plot_flag)
-    psi0 = - A * Rc**2
+    # psi0 = - A * Rc**2
 
-    if A_flag:
-        return xc, yc, w, Q, Rc, psi0, A
-
-    return xc, yc, w, Q, Rc, psi0
+    return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 
-def espra(xi, yi, ui, vi, Rc_max=1e3, plot_flag=False, A_flag=False):
+def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False):
     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
     mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
     xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
@@ -375,15 +340,12 @@ def espra(xi, yi, ui, vi, Rc_max=1e3, plot_flag=False, A_flag=False):
     Q = AQ / A
     q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
-    Rc, r2 = Rc_finder(xi, yi, ui, vi, xc, yc,
+    Rc_opt, psi0_opt, A_opt = Rc_finder(xi, yi, ui, vi, xc, yc,
                    q11, q12, q22, A,
                        upperbound=Rc_max, plot_flag=plot_flag)
-    psi0 = - A * Rc**2
+    # psi0 = - A * Rc**2
 
-    if A_flag:
-        return xc, yc, w, Q, Rc, psi0, A
-
-    return xc, yc, w, Q, Rc, psi0
+    return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 
 
@@ -419,9 +381,73 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=5, plot_flag=False):
+# def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=5, plot_flag=False):
+#     from scipy.optimize import minimize
+#     import matplotlib.pyplot as plt
+
+#     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
+#     mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
+#     xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
+
+#     dx, dy = xi - xc, yi - yc
+#     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+
+#     vt = np.abs(tangential_velocity(xi, yi, ui, vi, xc, yc,
+#                                     np.array([[q11, q12],[q12, q22]])))
+#     idx_max_vt = np.argmax(vt)
+#     rho_max = np.sqrt(rho2[idx_max_vt]) if rho2[idx_max_vt] >= 0 else np.nan
+#     Rc_0 = rho_max * np.sqrt(2)
+
+#     def residual(Rc):
+#         Rc = Rc[0]
+#         exp_term = np.exp(-rho2 / Rc**2)
+#         u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
+#         v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
+#         return np.sum((ui - u_model)**2 + (vi - v_model)**2)
+
+#     res = minimize(residual, x0=[Rc_0], bounds=[(1e-3, upperbound)], method='L-BFGS-B')
+#     Rc_opt = res.x[0]
+
+#     optimal_found = True
+#     if Rc_opt < Rc_0 / tol_factor or Rc_opt > Rc_0 * tol_factor:
+#         Rc_opt = Rc_0
+#         optimal_found = False
+
+#     exp_term = np.exp(-rho2 / Rc_opt**2)
+#     u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
+#     v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
+
+#     obs = np.concatenate([ui, vi])
+#     model = np.concatenate([u_model, v_model])
+#     ss_res = np.sum((obs - model)**2)
+#     ss_tot = np.sum((obs - np.mean(obs))**2)
+#     r2 = 1 - ss_res / ss_tot
+
+#     if plot_flag:
+#         plt.figure()
+#         plt.scatter(rho2, vt, marker='.', s=5)
+#         if optimal_found:
+#             x = np.linspace(np.min(xi), np.max(xi), 50)
+#             y = np.linspace(np.min(yi), np.max(yi), 50)
+#             dx, dy = x - xc, y - yc
+#             rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+#             Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
+#             vt_theo = 2*np.abs(A)*np.exp(-rho2/Rc_opt**2)*Qr
+#             plt.plot(rho2, vt_theo, color='r')
+#             plt.scatter(0, 0, color='g', marker='o', s=5)
+#             plt.title(fr'$r^2={r2}$')
+#         else:
+#             plt.scatter(rho_max**2, vt[idx_max_vt], color='r')
+#         plt.show()    
+
+#     return Rc_opt, r2
+
+
+
+def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, tol_factor=5, plot_flag=False):
     from scipy.optimize import minimize
     import matplotlib.pyplot as plt
+    from scipy.optimize import curve_fit
 
     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
     mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
@@ -429,6 +455,7 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_fact
 
     dx, dy = xi - xc, yi - yc
     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+    Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
 
     vt = np.abs(tangential_velocity(xi, yi, ui, vi, xc, yc,
                                     np.array([[q11, q12],[q12, q22]])))
@@ -436,66 +463,43 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_fact
     rho_max = np.sqrt(rho2[idx_max_vt]) if rho2[idx_max_vt] >= 0 else np.nan
     Rc_0 = rho_max * np.sqrt(2)
 
-    def residual(Rc):
-        Rc = Rc[0]
-        exp_term = np.exp(-rho2 / Rc**2)
-        u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
-        v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
-        return np.sum((ui - u_model)**2 + (vi - v_model)**2)
+    def vt_theo_func(rho2, A, Rc):
+        return 2 * np.abs(A) * np.exp(-rho2 / Rc**2) * Qr
 
-    res = minimize(residual, x0=[Rc_0], bounds=[(1e-3, upperbound)], method='L-BFGS-B')
-    Rc_opt = res.x[0]
+    popt, pcov = curve_fit(vt_theo_func, rho2, vt, p0=[A_0, Rc_0], maxfev=10000)
+    A_opt, Rc_opt = popt
 
     optimal_found = True
-    if Rc_opt < Rc_0 / tol_factor or Rc_opt > Rc_0 * tol_factor:
-        Rc_opt = Rc_0
+    if Rc_opt > upperbound:
+        A_opt, Rc_opt = A_0, Rc_0
         optimal_found = False
 
-    exp_term = np.exp(-rho2 / Rc_opt**2)
-    u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
-    v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
-
-    obs = np.concatenate([ui, vi])
-    model = np.concatenate([u_model, v_model])
-    ss_res = np.sum((obs - model)**2)
-    ss_tot = np.sum((obs - np.mean(obs))**2)
-    r2 = 1 - ss_res / ss_tot
+    psi0_opt = - A_opt * Rc_opt**2
 
     if plot_flag:
         plt.figure()
-        plt.scatter(rho2, vt, marker='.', s=5)
-        if optimal_found:
-            x = np.linspace(np.min(xi), np.max(xi), 50)
-            y = np.linspace(np.min(yi), np.max(yi), 50)
-            dx, dy = x - xc, y - yc
-            rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-            Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
-            vt_theo = 2*np.abs(A)*np.exp(-rho2/Rc_opt**2)*Qr
-            plt.plot(rho2, vt_theo, color='r')
-            plt.scatter(0, 0, color='g', marker='o', s=5)
-            plt.title(fr'$r^2={r2}$')
-        else:
-            plt.scatter(rho_max**2, vt[idx_max_vt], color='r')
-        plt.show()    
+        
+        
+        vt_fit = vt_theo_func(rho2, A_opt, Rc_opt)
 
-    return Rc_opt, r2
+        plt.scatter(0,0, s=8, color='g')
+        plt.scatter(rho2, vt, s=8, label='Observed')
+        plt.scatter(rho2, vt_fit, color='r', label='Fit', marker='.')
+        plt.axvline(x=Rc_opt**2/2, color='r', ls='--', label=r'$\rho_\max^2$')
+        plt.xlabel(r'$\rho^2$')
+        plt.ylabel(r'$v_t$')
+        plt.legend()
+        plt.title(f'{optimal_found}, A={A_opt}, Rc={round(Rc_opt)}, psi0_opt = {psi0_opt:.4f}')
+        plt.show()
 
+    return Rc_opt, psi0_opt, A_opt
 
 
-# def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=5, plot_flag=False):
-#     # q11, q12, q22 = Q[0,0], Q[0,1], Q[1,1]
-#     Q = np.array([[q11, q12], [q12, q22]])
-#     dx, dy = xi - xc, yi - yc
-#     vt = np.abs(tangential_velocity(xi, yi, ui, vi, xc, yc, Q))
-#     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-#     Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
-#     c = 2*np.abs(A)
-#     y = vt/(c*Qr + 1e-300)
-#     m = np.isfinite(y) & np.isfinite(rho2) & (y > 0)
-#     x, z = rho2[m], np.log(y[m])
-#     s = (x @ z) / (x @ x)
-#     return np.sqrt(-1/s) if s < 0 else np.nan, np.nan
 
+
+
+
+    
 
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
