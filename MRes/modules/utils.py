@@ -381,70 +381,7 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-# def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A, upperbound=1e3, tol_factor=5, plot_flag=False):
-#     from scipy.optimize import minimize
-#     import matplotlib.pyplot as plt
-
-#     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
-#     mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
-#     xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
-
-#     dx, dy = xi - xc, yi - yc
-#     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-
-#     vt = np.abs(tangential_velocity(xi, yi, ui, vi, xc, yc,
-#                                     np.array([[q11, q12],[q12, q22]])))
-#     idx_max_vt = np.argmax(vt)
-#     rho_max = np.sqrt(rho2[idx_max_vt]) if rho2[idx_max_vt] >= 0 else np.nan
-#     Rc_0 = rho_max * np.sqrt(2)
-
-#     def residual(Rc):
-#         Rc = Rc[0]
-#         exp_term = np.exp(-rho2 / Rc**2)
-#         u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
-#         v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
-#         return np.sum((ui - u_model)**2 + (vi - v_model)**2)
-
-#     res = minimize(residual, x0=[Rc_0], bounds=[(1e-3, upperbound)], method='L-BFGS-B')
-#     Rc_opt = res.x[0]
-
-#     optimal_found = True
-#     if Rc_opt < Rc_0 / tol_factor or Rc_opt > Rc_0 * tol_factor:
-#         Rc_opt = Rc_0
-#         optimal_found = False
-
-#     exp_term = np.exp(-rho2 / Rc_opt**2)
-#     u_model = -A * exp_term * (2*dx*q12 + 2*dy*q22)
-#     v_model =  A * exp_term * (2*dx*q11 + 2*dy*q12)
-
-#     obs = np.concatenate([ui, vi])
-#     model = np.concatenate([u_model, v_model])
-#     ss_res = np.sum((obs - model)**2)
-#     ss_tot = np.sum((obs - np.mean(obs))**2)
-#     r2 = 1 - ss_res / ss_tot
-
-#     if plot_flag:
-#         plt.figure()
-#         plt.scatter(rho2, vt, marker='.', s=5)
-#         if optimal_found:
-#             x = np.linspace(np.min(xi), np.max(xi), 50)
-#             y = np.linspace(np.min(yi), np.max(yi), 50)
-#             dx, dy = x - xc, y - yc
-#             rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-#             Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
-#             vt_theo = 2*np.abs(A)*np.exp(-rho2/Rc_opt**2)*Qr
-#             plt.plot(rho2, vt_theo, color='r')
-#             plt.scatter(0, 0, color='g', marker='o', s=5)
-#             plt.title(fr'$r^2={r2}$')
-#         else:
-#             plt.scatter(rho_max**2, vt[idx_max_vt], color='r')
-#         plt.show()    
-
-#     return Rc_opt, r2
-
-
-
-def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, tol_factor=5, plot_flag=False):
+def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_flag=False):
     from scipy.optimize import minimize
     import matplotlib.pyplot as plt
     from scipy.optimize import curve_fit
@@ -479,7 +416,6 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, tol_fa
     if plot_flag:
         plt.figure()
         
-        
         vt_fit = vt_theo_func(rho2, A_opt, Rc_opt)
 
         plt.scatter(0,0, s=8, color='g')
@@ -494,12 +430,6 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, tol_fa
 
     return Rc_opt, psi0_opt, A_opt
 
-
-
-
-
-
-    
 
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
