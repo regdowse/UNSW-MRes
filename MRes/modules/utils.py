@@ -405,6 +405,7 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_f
 
     popt, pcov = curve_fit(vt_theo_func, rho2, vt, p0=[A_0, Rc_0], maxfev=10000)
     A_opt, Rc_opt = popt
+    A_opt *= np.sign(A_0)
 
     optimal_found = True
     if Rc_opt > upperbound:
@@ -415,14 +416,15 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_f
 
     if plot_flag:
         plt.figure()
-        
         vt_fit = vt_theo_func(rho2, A_opt, Rc_opt)
-
         plt.scatter(0,0, s=8, color='g')
-        plt.scatter(rho2, vt, s=8, label='Observed')
-        plt.scatter(rho2, vt_fit, color='r', label='Fit', marker='.')
-        plt.axvline(x=Rc_opt**2/2, color='r', ls='--', label=r'$\rho_\max^2$')
-        plt.xlabel(r'$\rho^2$')
+        # plt.scatter(rho2, vt, s=8, label='Observed')
+        # plt.scatter(rho2, vt_fit, color='r', label='Fit', marker='.')
+        plt.scatter(np.sqrt(rho2), vt, s=8, label='Observed')
+        plt.scatter(np.sqrt(rho2), vt_fit, color='r', label='Fit', marker='.')
+        # plt.axvline(x=Rc_opt**2/2, color='r', ls='--', label=r'$\rho_\max^2$')
+        plt.axvline(x=Rc_opt/np.sqrt(2), color='r', ls='--', label=r'$\rho_\max$')
+        plt.xlabel(r'$\rho$')
         plt.ylabel(r'$v_t$')
         plt.legend()
         plt.title(f'{optimal_found}, A={A_opt}, Rc={round(Rc_opt)}, psi0_opt = {psi0_opt:.4f}')
@@ -521,31 +523,6 @@ def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False
                 i0, j0 = nic, njc - r
             dists[direction] = float(np.hypot(x[i0, j0] - xc, y[i0, j0] - yc))
     return dists
-
-def eddy_core_radius(r, v_theta):
-    r, v = np.asarray(r), np.asarray(v_theta)
-    m = ~np.isnan(r)&~np.isnan(v)
-    r, v = r[m], v[m]
-    order = np.argsort(r)
-    r, v = r[order], v[order]
-
-    R2_list, slopes = [], []
-    for n in range(2, len(r)+1):
-        # slope of vt=r·Ω through the origin
-        Ω = np.dot(r[:n], v[:n]) / np.dot(r[:n], r[:n])
-        v_fit = Ω * r[:n]
-        ss_res = np.sum((v[:n] - v_fit)**2)
-        ss_tot = np.sum((v[:n] - v[:n].mean())**2)
-        R2_list.append(1 - ss_res/ss_tot)
-        slopes.append(Ω)
-
-    R2_list = smooth(R2_list, np.arange(len(R2_list)), num=len(R2_list), window=round(len(R2_list)*.1))
-
-    i_best = int(np.argmax(R2_list))
-    r_core   = r[i_best+1]     # +1 because R2_list[0] used r[:2], so index→r[1]
-    Ω_uniform = slopes[i_best]
-    return r_core, Ω_uniform, R2_list, slopes
-
 
 
 
@@ -855,6 +832,19 @@ def extract_transect_center(u, v, X, Y, x0, y0, r=30):
         'xx': xx, 'yy': yy
     }
 
+def calc_ow(u, v, dx, dy):
+    dudy, dudx = np.gradient(u, dy, dx)
+    dvdy, dvdx = np.gradient(v, dy, dx)
+    
+    # normal strain, shear strain, vorticity
+    S_n   = dudx - dvdy
+    S_s   = dvdx + dudy
+    omega = dvdx - dudy
+    
+    # Okubo–Weiss parameter
+    OW = S_n**2 + S_s**2 - omega**2
+    return OW
+
 def plot_isosurface(ax, Xn, Yn, zn, Un, Vn, level=-0.2, elev=13, azim=135, flag=False):
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
     from skimage.measure import marching_cubes
@@ -941,23 +931,6 @@ def robust_smooth(y, x, win=5, poly=3, k=3.5, s=None):
     mask = np.abs(r) <= k*1.4826*mad
     spl = UnivariateSpline(y0[mask], x0[mask], s=s)
     return spl(y0), y0, x0
-
-# def robust_smooth(y, x, win=5, poly=3, k=3.5, s=None):
-#     from scipy.signal import savgol_filter
-#     from scipy.interpolate import UnivariateSpline
-#     i = np.argsort(y)
-#     y0, x0 = np.asarray(y)[i], np.asarray(x)[i]
-#     m = np.isfinite(y0) & np.isfinite(x0)
-#     if m.sum() < 3: return np.full_like(y0, np.nan), y0, x0
-#     y1, x1 = y0[m], x0[m]
-#     win = min(max((win|1), poly+2), len(y1)-(len(y1)+1)%2)
-#     r = x1 - savgol_filter(x1, win, poly, mode='interp')
-#     mad = np.median(np.abs(r - np.median(r))) + 1e-12
-#     mask = np.abs(r - np.median(r)) <= k*1.4826*mad
-#     spl = UnivariateSpline(y1[mask], x1[mask], s=s)
-#     out = np.full_like(y0, np.nan)
-#     out[m] = spl(y0[m])
-#     return out, y0, x0
 
 def normalize_matrix(matrix, mask_value=np.nan):
     valid_mask = np.where(matrix == mask_value, 0, 1)
@@ -1138,6 +1111,65 @@ def tilt_distance_LI(x, y, z, zmin=None, zmax=None):
     theta_deg = np.degrees(np.arctan2(TDy, TDx))
     return TD, theta_deg, (TDx, TDy)
 
+def project_sadcp_to_transect(x, y, u, v):
+
+    num_points = len(x)
+
+    df = pd.DataFrame({'x': x, 'y': y, 'u': u, 'v': v})
+    df = df.sort_values(by='x').reset_index(drop=True)
+    x, y, u, v = np.array(df['x']), np.array(df['y']), np.array(df['u']), np.array(df['v'])
+
+    # Fit a best-fit line (y = m*x + c) using linear regression.
+    A = np.vstack([x, np.ones(len(x))]).T
+    m, _ = np.linalg.lstsq(A, y, rcond=None)[0]
+    # Create a unit direction vector along the best-fit line.
+    direction = np.array([1, m])
+    direction = direction / np.linalg.norm(direction)
+    # Project each (x, y) point onto the line using the first point as reference.
+    p0 = np.array([x[0], y[0]])
+    points = np.column_stack((x, y))
+    projections = np.dot(points - p0, direction)
+    # Sort projections and corresponding velocities.
+    sort_idx = np.argsort(projections)
+    proj_sorted = projections[sort_idx]
+    u_sorted = u[sort_idx]
+    v_sorted = v[sort_idx]
+    # Interpolate the velocity components on evenly spaced positions.
+    new_distances = np.linspace(proj_sorted.min(), proj_sorted.max(), num_points)
+    new_u = np.interp(new_distances, proj_sorted, u_sorted)
+    new_v = np.interp(new_distances, proj_sorted, v_sorted)
+    # Calculate new (x, y) points along the line.
+    new_points = p0 + np.outer(new_distances, direction)
+    # Create and return the output dataframe.
+    x, y = new_points[:, 0], new_points[:, 1]
+
+    cos_theta = 1 / np.sqrt(1+m**2)
+    sin_theta = m / np.sqrt(1+m**2)
+    V_N = -new_u * sin_theta + new_v * cos_theta
+    V_T = new_v * sin_theta + new_u * cos_theta
+        
+    df_projected = pd.DataFrame({
+        'x': x,
+        'y': y,
+        'u': new_u,
+        'v': new_v,
+        'V_N': V_N,
+        'V_T': V_T,
+        # 'l': new_distances
+    })
+
+    df_projected = df_projected.sort_values(by='x').reset_index(drop=True)
+
+    df_projected['l'] = np.hypot(df_projected['x']-df_projected['x'].iloc[0], df_projected['y']-df_projected['y'].iloc[0])
+
+    return df_projected, m
+
+def translate_moca_results(x_l_start, y_l_start, m, l0, r0):
+
+    x0 = (l0-r0*m)/np.sqrt(1+m**2) + x_l_start
+    y0 = (l0*m+r0)/np.sqrt(1+m**2) + y_l_start
+    
+    return x0, y0
 
 
 
