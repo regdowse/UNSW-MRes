@@ -194,7 +194,7 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
 
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     
-    Rc_opt, psi0_opt, A_opt = Rc_finder(xi, yi, ui, vi, xc, yc,
+    Rc_opt, psi0_opt, A_opt = fit_psi_params_esp_methods(xi, yi, ui, vi, xc, yc,
                    q11, q12, q22, A,
                        upperbound=Rc_max, plot_flag=plot_flag)
     # psi0 = - A * Rc**2
@@ -302,7 +302,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
     
-    Rc_opt, psi0_opt, A_opt = Rc_finder(x1, y1, u1, v1, xc, yc,
+    Rc_opt, psi0_opt, A_opt = fit_psi_params_esp_methods(x1, y1, u1, v1, xc, yc,
                        q11, q12, q22, A,
                        upperbound=Rc_max, plot_flag=plot_flag)
     # psi0 = - A * Rc**2
@@ -318,15 +318,15 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False):
     from scipy.optimize import least_squares
 
     def residuals(params, x, y, u_i, v_i):
-        xc, yc, Q11, Q12, Q22 = params
-        u = -2 * Q22 * (y - yc) - 2 * Q12 * (x - xc)
-        v =  2 * Q11 * (x - xc) + 2 * Q12 * (y - yc)
+        xc, yc, Aq11, Aq12, Aq22 = params
+        u = -2 * Aq22 * (y - yc) - 2 * Aq12 * (x - xc)
+        v =  2 * Aq11 * (x - xc) + 2 * Aq12 * (y - yc)
         return np.concatenate([(u - u_i), (v - v_i)])
 
     def fit_params(x, y, u_i, v_i):
         xc_init, yc_init = np.mean(x), np.mean(y)
-        Q11_init, Q12_init, Q22_init = 1.0, 0.0, 1.0  # Initial guesses
-        params_init = [xc_init, yc_init, Q11_init, Q12_init, Q22_init]
+        Aq11_init, Aq12_init, Aq22_init = 1.0, 0.0, 1.0 
+        params_init = [xc_init, yc_init, Aq11_init, Aq12_init, Aq22_init]
         result = least_squares(residuals, params_init, args=(x, y, u_i, v_i))
         return result.x 
 
@@ -336,14 +336,23 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False):
 
     AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
 
-    A = np.sign(w)*np.sqrt(np.abs(np.linalg.det(AQ))) 
+    A = np.sign(Aq11)*np.sqrt(np.abs(np.linalg.det(AQ))) 
     Q = AQ / A
-    q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
-    Rc_opt, psi0_opt, A_opt = Rc_finder(xi, yi, ui, vi, xc, yc,
-                   q11, q12, q22, A,
-                       upperbound=Rc_max, plot_flag=plot_flag)
-    # psi0 = - A * Rc**2
+    dx, dy = xi - xc, yi - yc
+    rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+    Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
+    vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
+
+    if A < 0:
+        mask = vt <= 0
+    else:
+        mask = vt >= 0
+        
+    rho2, Qr, vt = rho2[mask], Qr[mask], vt[mask]
+        
+    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
+                                             plot=plot_flag, Rc_max=Rc_max)
 
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
@@ -381,8 +390,8 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_flag=False):
-    from scipy.optimize import minimize
+def fit_psi_params_esp_methods(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_flag=False):
+    # from scipy.optimize import minimize
     import matplotlib.pyplot as plt
     from scipy.optimize import curve_fit
 
@@ -394,18 +403,17 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_f
     rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
     Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
 
-    vt = np.abs(tangential_velocity(xi, yi, ui, vi, xc, yc,
-                                    np.array([[q11, q12],[q12, q22]])))
+    vt = tangential_velocity(xi, yi, ui, vi, xc, yc,
+                                    np.array([[q11, q12],[q12, q22]]))
     idx_max_vt = np.argmax(vt)
     rho_max = np.sqrt(rho2[idx_max_vt]) if rho2[idx_max_vt] >= 0 else np.nan
     Rc_0 = rho_max * np.sqrt(2)
 
     def vt_theo_func(rho2, A, Rc):
-        return 2 * np.abs(A) * np.exp(-rho2 / Rc**2) * Qr
+        return 2 * A * np.exp(-rho2 / Rc**2) * Qr
 
     popt, pcov = curve_fit(vt_theo_func, rho2, vt, p0=[A_0, Rc_0], maxfev=10000)
     A_opt, Rc_opt = popt
-    A_opt *= np.sign(A_0)
 
     optimal_found = True
     if Rc_opt > upperbound:
@@ -418,20 +426,59 @@ def Rc_finder(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_f
         plt.figure()
         vt_fit = vt_theo_func(rho2, A_opt, Rc_opt)
         plt.scatter(0,0, s=8, color='g')
-        # plt.scatter(rho2, vt, s=8, label='Observed')
-        # plt.scatter(rho2, vt_fit, color='r', label='Fit', marker='.')
-        plt.scatter(np.sqrt(rho2), vt, s=8, label='Observed')
-        plt.scatter(np.sqrt(rho2), vt_fit, color='r', label='Fit', marker='.')
-        # plt.axvline(x=Rc_opt**2/2, color='r', ls='--', label=r'$\rho_\max^2$')
+        plt.scatter(np.sqrt(rho2), np.abs(vt), s=8, label='Observed')
+        plt.scatter(np.sqrt(rho2), np.abs(vt_fit), color='r', label='Fit', marker='.')
         plt.axvline(x=Rc_opt/np.sqrt(2), color='r', ls='--', label=r'$\rho_\max$')
-        plt.xlabel(r'$\rho$')
-        plt.ylabel(r'$v_t$')
-        plt.legend()
+        plt.xlabel(r'$\rho$'); plt.ylabel(r'$|v_t|$'); plt.legend()
         plt.title(f'{optimal_found}, A={A_opt}, Rc={round(Rc_opt)}, psi0_opt = {psi0_opt:.4f}')
         plt.show()
 
     return Rc_opt, psi0_opt, A_opt
 
+def fit_psi_params(rho2, Qr, vt, A_0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5):
+    from scipy.optimize import curve_fit
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    d = pd.DataFrame({'rho2': rho2, 'Qr': Qr, 'vt': vt})
+    m = np.isfinite(d.rho2) & np.isfinite(d.vt) & np.isfinite(d.Qr) & (d.rho2 >= 0) & (d.Qr != 0)
+    if not np.any(m):
+        raise ValueError("No valid rows after masking (need vt<=0 and finite rho2, vt, Qr).")
+    rho2 = d.rho2.values[m]
+    vt   = d.vt.values[m]
+    Qr   = d.Qr.values[m]
+
+    def vt_model(rho2_, A, Rc):
+        return 2.0 * A * np.exp(-rho2_ / (Rc**2)) * Qr
+
+    i = np.nanargmax(np.abs(vt))
+    rho_max = np.sqrt(rho2[i])
+    Rc0 = max(rho_max * np.sqrt(2.0), 1e-6)
+    denom = 2.0 * Qr * np.exp(-rho2 / (Rc0**2))
+    if A0 is None:
+        A0 = np.nanmedian(vt[np.abs(denom) > 0] / denom[np.abs(denom) > 0])
+    if not np.isfinite(A0):
+        A0 = 0.0
+
+    popt, pcov = curve_fit(vt_model, rho2, vt, p0=[A0, Rc0], bounds=([-np.inf, 1e-8], [np.inf, np.inf]), maxfev=maxfev)
+    A_opt, Rc_opt = popt
+
+    if Rc_opt > upperbound:
+        A_opt, Rc_opt = A_0, Rc_0
+    
+    psi0_opt = -A_opt * Rc_opt**2
+
+    if plot:
+        r = np.sqrt(rho2)
+        vt_fit = vt_model(rho2, *popt)
+        if ax is None:
+            _, ax = plt.subplots()
+        ax.scatter(r, np.abs(vt), s=8, label='Observed')
+        ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit')
+        ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$')
+        ax.set_xlabel(r'$\rho$'); ax.set_ylabel(r'$|v_t|$'); ax.legend()
+        ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}')
+
+    return Rc_opt, psi0_opt, A_opt#, popt, pcov
 
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
