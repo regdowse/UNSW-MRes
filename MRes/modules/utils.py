@@ -194,10 +194,18 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
 
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     
-    Rc_opt, psi0_opt, A_opt = fit_psi_params_esp_methods(xi, yi, ui, vi, xc, yc,
-                   q11, q12, q22, A,
-                       upperbound=Rc_max, plot_flag=plot_flag)
-    # psi0 = - A * Rc**2
+    # fit Rc, psi0, A
+    dx, dy = xi - xc, yi - yc
+    rho2 = Q[0,0]*dx**2 + 2*Q[1,0]*dx*dy + Q[1,1]*dy**2
+    Qr = np.sqrt((Q[0,0]*dx + Q[1,0]*dy)**2 + (Q[1,0]*dx + Q[1,1]*dy)**2)
+    vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
+    if A < 0:
+        mask = vt <= 0
+    else:
+        mask = vt >= 0
+    rho2, Qr, vt = rho2[mask], Qr[mask], vt[mask]
+    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
+                                             plot=plot_flag, Rc_max=Rc_max)
 
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
@@ -301,11 +309,19 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     yi = np.concatenate([y1f, y2])
     ui = np.concatenate([u1f, u2])
     vi = np.concatenate([v1f, v2])
-    
-    Rc_opt, psi0_opt, A_opt = fit_psi_params_esp_methods(x1, y1, u1, v1, xc, yc,
-                       q11, q12, q22, A,
-                       upperbound=Rc_max, plot_flag=plot_flag)
-    # psi0 = - A * Rc**2
+
+    # fit Rc, psi0, A
+    dx, dy = xi - xc, yi - yc
+    rho2 = Q[0,0]*dx**2 + 2*Q[1,0]*dx*dy + Q[1,1]*dy**2
+    Qr = np.sqrt((Q[0,0]*dx + Q[1,0]*dy)**2 + (Q[1,0]*dx + Q[1,1]*dy)**2)
+    vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
+    if A < 0:
+        mask = vt <= 0
+    else:
+        mask = vt >= 0
+    rho2, Qr, vt = rho2[mask], Qr[mask], vt[mask]
+    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
+                                             plot=plot_flag, Rc_max=Rc_max)
 
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
@@ -340,8 +356,8 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False):
     Q = AQ / A
 
     dx, dy = xi - xc, yi - yc
-    rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-    Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
+    rho2 = Q[0,0]*dx**2 + 2*Q[1,0]*dx*dy + Q[1,1]*dy**2
+    Qr = np.sqrt((Q[0,0]*dx + Q[1,0]*dy)**2 + (Q[1,0]*dx + Q[1,1]*dy)**2)
     vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
 
     if A < 0:
@@ -390,52 +406,7 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-def fit_psi_params_esp_methods(xi, yi, ui, vi, xc, yc, q11, q12, q22, A_0, upperbound=1e5, plot_flag=False):
-    # from scipy.optimize import minimize
-    import matplotlib.pyplot as plt
-    from scipy.optimize import curve_fit
-
-    xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
-    mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
-    xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
-
-    dx, dy = xi - xc, yi - yc
-    rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
-    Qr = np.sqrt((q11*dx + q12*dy)**2 + (q12*dx + q22*dy)**2)
-
-    vt = tangential_velocity(xi, yi, ui, vi, xc, yc,
-                                    np.array([[q11, q12],[q12, q22]]))
-    idx_max_vt = np.argmax(vt)
-    rho_max = np.sqrt(rho2[idx_max_vt]) if rho2[idx_max_vt] >= 0 else np.nan
-    Rc_0 = rho_max * np.sqrt(2)
-
-    def vt_theo_func(rho2, A, Rc):
-        return 2 * A * np.exp(-rho2 / Rc**2) * Qr
-
-    popt, pcov = curve_fit(vt_theo_func, rho2, vt, p0=[A_0, Rc_0], maxfev=10000)
-    A_opt, Rc_opt = popt
-
-    optimal_found = True
-    if Rc_opt > upperbound:
-        A_opt, Rc_opt = A_0, Rc_0
-        optimal_found = False
-
-    psi0_opt = - A_opt * Rc_opt**2
-
-    if plot_flag:
-        plt.figure()
-        vt_fit = vt_theo_func(rho2, A_opt, Rc_opt)
-        plt.scatter(0,0, s=8, color='g')
-        plt.scatter(np.sqrt(rho2), np.abs(vt), s=8, label='Observed')
-        plt.scatter(np.sqrt(rho2), np.abs(vt_fit), color='r', label='Fit', marker='.')
-        plt.axvline(x=Rc_opt/np.sqrt(2), color='r', ls='--', label=r'$\rho_\max$')
-        plt.xlabel(r'$\rho$'); plt.ylabel(r'$|v_t|$'); plt.legend()
-        plt.title(f'{optimal_found}, A={A_opt}, Rc={round(Rc_opt)}, psi0_opt = {psi0_opt:.4f}')
-        plt.show()
-
-    return Rc_opt, psi0_opt, A_opt
-
-def fit_psi_params(rho2, Qr, vt, A_0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5):
+def fit_psi_params(rho2, Qr, vt, A0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5):
     from scipy.optimize import curve_fit
     import matplotlib.pyplot as plt
     import pandas as pd
@@ -462,8 +433,8 @@ def fit_psi_params(rho2, Qr, vt, A_0=None, plot=False, ax=None, maxfev=10000, Rc
     popt, pcov = curve_fit(vt_model, rho2, vt, p0=[A0, Rc0], bounds=([-np.inf, 1e-8], [np.inf, np.inf]), maxfev=maxfev)
     A_opt, Rc_opt = popt
 
-    if Rc_opt > upperbound:
-        A_opt, Rc_opt = A_0, Rc_0
+    if Rc_opt > Rc_max:
+        A_opt, Rc_opt = A0, Rc0
     
     psi0_opt = -A_opt * Rc_opt**2
 
@@ -473,8 +444,8 @@ def fit_psi_params(rho2, Qr, vt, A_0=None, plot=False, ax=None, maxfev=10000, Rc
         if ax is None:
             _, ax = plt.subplots()
         ax.scatter(r, np.abs(vt), s=8, label='Observed')
-        ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit')
-        ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$')
+        ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit', color='#ff7f0e')
+        ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw='2', color='#ff7f0e')
         ax.set_xlabel(r'$\rho$'); ax.set_ylabel(r'$|v_t|$'); ax.legend()
         ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}')
 
