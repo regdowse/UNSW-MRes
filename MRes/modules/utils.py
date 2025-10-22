@@ -326,7 +326,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 
-def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False):
+def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None):
     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
     mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
     xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
@@ -364,11 +364,10 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False):
         mask = vt <= 0
     else:
         mask = vt >= 0
-        
     rho2, Qr, vt = rho2[mask], Qr[mask], vt[mask]
         
     Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
-                                             plot=plot_flag, Rc_max=Rc_max)
+                                             plot=plot_flag, Rc_max=Rc_max, ax=ax)
 
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
@@ -406,7 +405,7 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-def fit_psi_params(rho2, Qr, vt, A0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5):
+def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5):
     from scipy.optimize import curve_fit
     import matplotlib.pyplot as plt
     import pandas as pd
@@ -423,7 +422,8 @@ def fit_psi_params(rho2, Qr, vt, A0=None, plot=False, ax=None, maxfev=10000, Rc_
 
     i = np.nanargmax(np.abs(vt))
     rho_max = np.sqrt(rho2[i])
-    Rc0 = max(rho_max * np.sqrt(2.0), 1e-6)
+    if Rc0 is None:
+        Rc0 = max(rho_max * np.sqrt(2.0), 1e-6)
     denom = 2.0 * Qr * np.exp(-rho2 / (Rc0**2))
     if A0 is None:
         A0 = np.nanmedian(vt[np.abs(denom) > 0] / denom[np.abs(denom) > 0])
@@ -443,6 +443,7 @@ def fit_psi_params(rho2, Qr, vt, A0=None, plot=False, ax=None, maxfev=10000, Rc_
         vt_fit = vt_model(rho2, *popt)
         if ax is None:
             _, ax = plt.subplots()
+        ax.scatter(0,0, color='g')
         ax.scatter(r, np.abs(vt), s=8, label='Observed')
         ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit', color='#ff7f0e')
         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw='2', color='#ff7f0e')
@@ -542,7 +543,13 @@ def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False
             dists[direction] = float(np.hypot(x[i0, j0] - xc, y[i0, j0] - yc))
     return dists
 
-
+def psi_params(xc, yc, Q, xi, yi, ui, vi):
+    dx, dy = xi - xc, yi - yc
+    rho2 = Q[0,0]*dx**2 + 2*Q[1,0]*dx*dy + Q[1,1]*dy**2
+    Qr = np.sqrt((Q[0,0]*dx + Q[1,0]*dy)**2 + (Q[1,0]*dx + Q[1,1]*dy)**2)
+    vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
+    df = pd.DataFrame({'rho2': rho2, 'Qr': Qr, 'vt': vt})
+    return df
 
 
 
