@@ -326,7 +326,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 
-def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None):
+def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None, r2_flag=False):
     xi, yi, ui, vi = [np.asarray(a) for a in (xi, yi, ui, vi)]
     mask = ~np.isnan(xi) & ~np.isnan(yi) & ~np.isnan(ui) & ~np.isnan(vi)
     xi, yi, ui, vi = xi[mask], yi[mask], ui[mask], vi[mask]
@@ -348,10 +348,17 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None):
 
     xc, yc, Aq11, Aq12, Aq22 = fit_params(xi, yi, ui, vi)
 
+    # Predicted velocities
+    u_pred = -2 * Aq22 * (yi - yc) - 2 * Aq12 * (xi - xc)
+    v_pred =  2 * Aq11 * (xi - xc) + 2 * Aq12 * (yi - yc)
+    # --- Vector R² computation ---
+    err2 = (u_pred - ui)**2 + (v_pred - vi)**2
+    mean_u, mean_v = np.mean(ui), np.mean(vi)
+    tot2 = (ui - mean_u)**2 + (vi - mean_v)**2
+    r2_core = 1 - np.sum(err2) / np.sum(tot2) if np.sum(tot2) != 0 else np.nan
+
     w = 2*(Aq11 + Aq22)
-
     AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
-
     A = np.sign(Aq11)*np.sqrt(np.abs(np.linalg.det(AQ))) 
     Q = AQ / A
 
@@ -359,16 +366,16 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None):
     rho2 = Q[0,0]*dx**2 + 2*Q[1,0]*dx*dy + Q[1,1]*dy**2
     Qr = np.sqrt((Q[0,0]*dx + Q[1,0]*dy)**2 + (Q[1,0]*dx + Q[1,1]*dy)**2)
     vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
-
     if A < 0:
         mask = vt <= 0
     else:
         mask = vt >= 0
     rho2, Qr, vt = rho2[mask], Qr[mask], vt[mask]
-        
-    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
-                                             plot=plot_flag, Rc_max=Rc_max, ax=ax)
 
+    Rc_opt, psi0_opt, A_opt, r2_outer_core = fit_psi_params(rho2, Qr, vt, A0=A,
+                                                            plot=plot_flag, Rc_max=Rc_max, ax=ax, r2_flag=True)
+    if r2_flag:
+        return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, r2_core, r2_outer_core
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 
@@ -405,14 +412,14 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
     return vt
 
-def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5):
+def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5, r2_flag=False):
     from scipy.optimize import curve_fit
     import matplotlib.pyplot as plt
     import pandas as pd
     d = pd.DataFrame({'rho2': rho2, 'Qr': Qr, 'vt': vt})
     m = np.isfinite(d.rho2) & np.isfinite(d.vt) & np.isfinite(d.Qr) & (d.rho2 >= 0) & (d.Qr != 0)
     if not np.any(m):
-        raise ValueError("No valid rows after masking (need vt<=0 and finite rho2, vt, Qr).")
+        raise ValueError("No valid rows after masking.")
     rho2 = d.rho2.values[m]
     vt   = d.vt.values[m]
     Qr   = d.Qr.values[m]
@@ -438,6 +445,12 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=
     
     psi0_opt = -A_opt * Rc_opt**2
 
+    # --- Compute R² ---
+    vt_fit = vt_model(rho2, *popt)
+    ss_res = np.sum((vt - vt_fit)**2)
+    ss_tot = np.sum((vt - np.mean(vt))**2)
+    r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
+
     if plot:
         r = np.sqrt(rho2)
         vt_fit = vt_model(rho2, *popt)
@@ -448,9 +461,11 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=
         ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit', color='#ff7f0e')
         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw='2', color='#ff7f0e')
         ax.set_xlabel(r'$\rho$'); ax.set_ylabel(r'$|v_t|$'); ax.legend()
-        ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}')
+        ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}, r2={r2:.2f}')
 
-    return Rc_opt, psi0_opt, A_opt#, popt, pcov
+    if r2_flag:
+        return Rc_opt, psi0_opt, A_opt, r2
+    return Rc_opt, psi0_opt, A_opt
 
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
