@@ -456,7 +456,7 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=
         vt_fit = vt_model(rho2, *popt)
         if ax is None:
             _, ax = plt.subplots()
-        ax.scatter(0,0, color='g')
+        ax.scatter(0,0, color='w',zorder=-10)
         ax.scatter(r, np.abs(vt), s=8, label='Observed')
         ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit', color='#ff7f0e')
         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw='2', color='#ff7f0e')
