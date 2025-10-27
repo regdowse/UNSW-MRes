@@ -536,11 +536,11 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
         if ax is None:
             _, ax = plt.subplots()
         ax.scatter(r_data, np.abs(vt), s=8, label='Observed')
-        ax.plot(r_grid, np.abs(vt_grid), label='Fit', color='#ff7f0e', lw=4)
+        ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=4, color='#ff7f0e')
         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='#ff7f0e')
         ax.set_xlabel(r'$\rho$')
         ax.set_ylabel(r'$|v_t^\star|$')
-        ax.legend()
+        # ax.legend()
         ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}, R²={r2:.2f}')
 
     return (Rc_opt, psi0_opt, A_opt, r2) if r2_flag else (Rc_opt, psi0_opt, A_opt)
