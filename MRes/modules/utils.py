@@ -413,61 +413,6 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
     return vt
 
 # def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5, r2_flag=False):
-#     from scipy.optimize import curve_fit
-#     import matplotlib.pyplot as plt
-#     import pandas as pd
-#     d = pd.DataFrame({'rho2': rho2, 'Qr': Qr, 'vt': vt})
-#     m = np.isfinite(d.rho2) & np.isfinite(d.vt) & np.isfinite(d.Qr) & (d.rho2 >= 0) & (d.Qr != 0)
-#     if not np.any(m):
-#         raise ValueError("No valid rows after masking.")
-#     rho2 = d.rho2.values[m]
-#     vt   = d.vt.values[m]
-#     Qr   = d.Qr.values[m]
-
-#     def vt_model(rho2_, A, Rc):
-#         return 2.0 * A * np.exp(-rho2_ / (Rc**2)) * Qr
-
-#     i = np.nanargmax(np.abs(vt))
-#     rho_max = np.sqrt(rho2[i])
-#     if Rc0 is None:
-#         Rc0 = max(rho_max * np.sqrt(2.0), 1e-6)
-#     denom = 2.0 * Qr * np.exp(-rho2 / (Rc0**2))
-#     if A0 is None:
-#         A0 = np.nanmedian(vt[np.abs(denom) > 0] / denom[np.abs(denom) > 0])
-#     if not np.isfinite(A0):
-#         A0 = 0.0
-
-#     popt, pcov = curve_fit(vt_model, rho2, vt, p0=[A0, Rc0], bounds=([-np.inf, 1e-8], [np.inf, np.inf]), maxfev=maxfev)
-#     A_opt, Rc_opt = popt
-
-#     if Rc_opt > Rc_max:
-#         A_opt, Rc_opt = A0, Rc0
-    
-#     psi0_opt = -A_opt * Rc_opt**2
-
-#     # --- Compute R² ---
-#     vt_fit = vt_model(rho2, *popt)
-#     ss_res = np.sum((vt - vt_fit)**2)
-#     ss_tot = np.sum((vt - np.mean(vt))**2)
-#     r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
-
-#     if plot:
-#         r = np.sqrt(rho2)
-#         vt_fit = vt_model(rho2, *popt)
-#         if ax is None:
-#             _, ax = plt.subplots()
-#         ax.scatter(0,0, color='w',zorder=-10)
-#         ax.scatter(r, np.abs(vt), s=8, label='Observed')
-#         ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit', color='#ff7f0e')
-#         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw='2', color='#ff7f0e')
-#         ax.set_xlabel(r'$\rho$'); ax.set_ylabel(r'$|v_t|$'); ax.legend()
-#         ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}, r2={r2:.2f}')
-
-#     if r2_flag:
-#         return Rc_opt, psi0_opt, A_opt, r2
-#     return Rc_opt, psi0_opt, A_opt
-
-# def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5, r2_flag=False, rho_plot_max=None):
 #     import numpy as np
 #     from scipy.optimize import curve_fit
 #     import matplotlib.pyplot as plt
@@ -514,23 +459,18 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
 #     psi0_opt = -A_opt * Rc_opt**2
 
 #     # R^2
-#     vt_fit = vt_model(rho2, A_opt, Rc_opt)
+#     vt_fit = vt_model(rho2, *popt)
 #     ss_res = np.sum((vt - vt_fit)**2)
 #     ss_tot = np.sum((vt - np.mean(vt))**2)
 #     r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
 
 #     if plot:
+#         r = np.sqrt(rho2)
 #         if ax is None:
 #             _, ax = plt.subplots()
-
-#         # if rho_plot_max is None:
-#         #     rho_plot_max = np.max(np.sqrt(rho2))
-#         # rho2_plot = np.linspace(0, rho_plot_max**2, 100)
-#         # vt_fit_plot = vt_model(rho2_plot, A_opt, Rc_opt)
-                
 #         ax.scatter(0, 0, color='w', zorder=-10)
-#         ax.scatter(np.sqrt(rho2), np.abs(vt), s=8, label='Observed (normalised)')
-#         ax.scatter(rho2, np.abs(vt_fit), label='Fit', color='#ff7f0e')
+#         ax.scatter(r, np.abs(vt), s=8, label='Observed')
+#         ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit', color='#ff7f0e')
 #         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='#ff7f0e')
 #         ax.set_xlabel(r'$\rho$')
 #         ax.set_ylabel(r'$|v_t^\star|$')
@@ -539,29 +479,27 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
 
 #     return (Rc_opt, psi0_opt, A_opt, r2) if r2_flag else (Rc_opt, psi0_opt, A_opt)
 
-def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=10000, Rc_max=1e5, r2_flag=False):
+def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
+                   maxfev=10000, Rc_max=1e5, r2_flag=False,
+                   rho_plot_max=None, n_curve=400):
     import numpy as np
     from scipy.optimize import curve_fit
     import matplotlib.pyplot as plt
     import pandas as pd
 
     d = pd.DataFrame({'rho2': rho2, 'Qr': Qr, 'vt': vt})
-    m = (np.isfinite(d.rho2) & np.isfinite(d.vt) & np.isfinite(d.Qr)
-         & (d.rho2 >= 0) & (d.Qr != 0))
+    m = (np.isfinite(d.rho2) & np.isfinite(d.vt) & np.isfinite(d.Qr) & (d.rho2 >= 0) & (d.Qr != 0))
     if not np.any(m):
         raise ValueError("No valid rows after masking.")
     rho2 = d.rho2.values[m]
     vt   = d.vt.values[m]
     Qr   = d.Qr.values[m]
 
-    # Normalise: v_t^* = v_t * (rho / ||Q r||) = vt * sqrt(rho2)/Qr
     vt = vt * (np.sqrt(rho2) / Qr)
 
-    # Model: v_t^*(rho) = 2 A sqrt(rho2) exp(-rho2 / Rc^2)
     def vt_model(rho2_, A, Rc):
         return 2.0 * A * np.sqrt(rho2_) * np.exp(-rho2_ / (Rc**2))
 
-    # Initial guesses
     i = np.nanargmax(np.abs(vt))
     rho_max = np.sqrt(rho2[i])
     if Rc0 is None:
@@ -574,30 +512,31 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=
     if not np.isfinite(A0):
         A0 = 0.0
 
-    popt, pcov = curve_fit(
-        vt_model, rho2, vt, p0=[A0, Rc0],
-        bounds=([-np.inf, 1e-8], [np.inf, np.inf]),
-        maxfev=maxfev
-    )
+    popt, _ = curve_fit(vt_model, rho2, vt, p0=[A0, Rc0],
+                        bounds=([-np.inf, 1e-8], [np.inf, np.inf]),
+                        maxfev=maxfev)
     A_opt, Rc_opt = popt
     if Rc_opt > Rc_max:
         A_opt, Rc_opt = A0, Rc0
 
     psi0_opt = -A_opt * Rc_opt**2
 
-    # R^2
     vt_fit = vt_model(rho2, *popt)
     ss_res = np.sum((vt - vt_fit)**2)
     ss_tot = np.sum((vt - np.mean(vt))**2)
     r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
 
     if plot:
-        r = np.sqrt(rho2)
+        r_data = np.sqrt(rho2)
+        if rho_plot_max is None:
+            rho_plot_max = float(np.nanmax(r_data)) if r_data.size else Rc_opt
+        r_grid = np.linspace(0.0, rho_plot_max, n_curve)
+        vt_grid = vt_model(r_grid**2, A_opt, Rc_opt)
+
         if ax is None:
             _, ax = plt.subplots()
-        ax.scatter(0, 0, color='w', zorder=-10)
-        ax.scatter(r, np.abs(vt), s=8, label='Observed (normalised)')
-        ax.scatter(r, np.abs(vt_fit), marker='.', label='Fit', color='#ff7f0e')
+        ax.scatter(r_data, np.abs(vt), s=8, label='Observed')
+        ax.plot(r_grid, np.abs(vt_grid), label='Fit', color='#ff7f0e', lw=4)
         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='#ff7f0e')
         ax.set_xlabel(r'$\rho$')
         ax.set_ylabel(r'$|v_t^\star|$')
@@ -605,6 +544,7 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None, maxfev=
         ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}, R²={r2:.2f}')
 
     return (Rc_opt, psi0_opt, A_opt, r2) if r2_flag else (Rc_opt, psi0_opt, A_opt)
+
 
 def calc_tang_vel(xc, yc, xp, yp, up, vp):
     xp, yp = np.asarray(xp), np.asarray(yp)
