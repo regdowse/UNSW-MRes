@@ -480,50 +480,7 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
 
     return (Rc_opt, psi0_opt, A_opt, r2) if r2_flag else (Rc_opt, psi0_opt, A_opt)
 
-
-def calc_tang_vel(xc, yc, xp, yp, up, vp):
-    xp, yp = np.asarray(xp), np.asarray(yp)
-    up, vp = np.asarray(up), np.asarray(vp)
-    dx = xp - xc
-    dy = yp - yc
-    r = np.hypot(dx, dy)
-    v_theta = (-up * dy + vp * dx) / r
-    v_theta = np.where(r>0, v_theta, 0.0)
-    return v_theta
-
-def calc_tang_vel_max_r(xc, yc, xp, yp, up, vp, cyc=None): 
-    xp, yp = np.asarray(xp), np.asarray(yp)
-    up, vp = np.asarray(up), np.asarray(vp)
-    dx = xp - xc
-    dy = yp - yc
-    r = np.hypot(dx, dy)
-    v_theta = (-up * dy + vp * dx) / r
-
-    if cyc is None:
-        v_theta = np.abs(v_theta)
-    elif cyc == 'AE':
-        mask = v_theta >= 0
-        if np.sum(mask) == 0:
-            return np.nan
-        v_theta = np.abs(v_theta[mask])
-        r = r[mask]
-    elif cyc == 'CE':
-        mask = v_theta <= 0
-        if np.sum(mask) == 0:
-            return np.nan
-        v_theta = np.abs(v_theta[mask])
-        r = r[mask]
-    else:
-        return np.nan
-
-    v_theta = np.where(r>0, v_theta, 0.0)
-
-    i_peak = np.nanargmax(v_theta)
-    r_peak =  r[i_peak]
-    
-    return r_peak
-
-def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False): # what I used for the clim
+def find_directional_radii(u, v, x, y, xc, yc, Q, return_index=False): # what I used for the clim
     """
     Returns dict of 'up','right','down','left' where each value is either:
       - steps from (nic,njc) where |v_theta| stops growing (return_index=True), or
@@ -539,7 +496,7 @@ def find_directional_radii(u, v, x, y, xc, yc, calc_tang_vel, return_index=False
         steps = 0
         for r in range(1, max_r + 1):
             i, j = nic + di * r, njc + dj * r
-            vt = abs(calc_tang_vel(xc, yc, x[i, j], y[i, j], u[i, j], v[i, j]))
+            vt = np.abs(tangential_velocity(x[i, j], y[i, j], u[i, j], v[i, j], xc, yc, Q))
             if np.isnan(vt) or vt < v_old:
                 break
             v_old = vt
@@ -580,8 +537,15 @@ def psi_params(xc, yc, Q, xi, yi, ui, vi):
     df = pd.DataFrame({'rho2': rho2, 'Qr': Qr, 'vt': vt})
     return df
 
+def plot_max_vt(X, Y, xc, yc, q11, q12, q22, Rc):
+    dx = X - xc
+    dy = Y - yc
+    rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
 
-
+    mask = np.isclose(rho2, Rc**2/2, rtol=1e-3, atol=1e-3)
+    x_ell = X[mask]
+    y_ell = Y[mask]
+    return x_ell, y_ell
 
 
 
