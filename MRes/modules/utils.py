@@ -187,8 +187,11 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
     xc, yc = l0, r0
 
     Aq11, Aq12, Aq22 = w/4, 0.0, w/4
+
     AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
-    A = np.sign(w)*np.sqrt(np.abs(np.linalg.det(AQ))) 
+    detAQ = np.linalg.det(AQ)
+    A = (abs(detAQ))**(0.5)
+    A = np.sign(Aq11)*A
     Q = AQ / A
     q11, q12, q22 = Q[0,0], 0.0, Q[1,1]
 
@@ -293,8 +296,9 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     w = 2 * (Aq11 + Aq22)
 
     AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
-
-    A = np.sign(w)*np.sqrt(np.abs(np.linalg.det(AQ))) 
+    detAQ = np.linalg.det(AQ)
+    A = (abs(detAQ))**(0.5)
+    A = np.sign(Aq11)*A
     Q = AQ / A
     q11, q12, q22 = Q[0,0], Q[1,0], Q[1,1]
 
@@ -358,8 +362,11 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None, r2_flag=False):
     r2_core = 1 - np.sum(err2) / np.sum(tot2) if np.sum(tot2) != 0 else np.nan
 
     w = 2*(Aq11 + Aq22)
+
     AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
-    A = np.sign(Aq11)*np.sqrt(np.abs(np.linalg.det(AQ))) 
+    detAQ = np.linalg.det(AQ)
+    A = (abs(detAQ))**(0.5)
+    A = np.sign(Aq11)*A
     Q = AQ / A
 
     dx, dy = xi - xc, yi - yc
@@ -377,7 +384,6 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None, r2_flag=False):
     if r2_flag:
         return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, r2_core, r2_outer_core
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
-
 
 
 
@@ -480,7 +486,7 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
 
     return (Rc_opt, psi0_opt, A_opt, r2) if r2_flag else (Rc_opt, psi0_opt, A_opt)
 
-def find_directional_radii(u, v, x, y, xc, yc, Q, return_index=False): # what I used for the clim
+def find_directional_radii(u, v, x, y, xc, yc, Q, return_index=False):
     """
     Returns dict of 'up','right','down','left' where each value is either:
       - steps from (nic,njc) where |v_theta| stops growing (return_index=True), or
