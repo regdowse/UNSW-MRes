@@ -1195,7 +1195,15 @@ def translate_moca_results(x_l_start, y_l_start, m, l0, r0):
     
     return x0, y0
 
+def ellipticity_from_Q(Q):
+    eigvals = np.linalg.eigvals(Q)
+    lam1, lam2 = np.sort(eigvals)
 
+    axis_ratio = np.sqrt(lam1 / lam2)
+    ellipticity = 1 - axis_ratio
+    eccentricity = np.sqrt(1 - lam1 / lam2)
+
+    return axis_ratio, ellipticity, eccentricity
 
 
 
