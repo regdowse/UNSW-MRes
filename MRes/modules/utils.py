@@ -1210,7 +1210,7 @@ def eccentricity(df):
 def axis_ratio(df):
     lam1 = 0.5*(df.sq11 + df.sq22) + np.sqrt(((df.sq11 - df.sq22)/2)**2 + df.sq12**2)  # major
     lam2 = 0.5*(df.sq11 + df.sq22) - np.sqrt(((df.sq11 - df.sq22)/2)**2 + df.sq12**2)  # minor
-    return lam1/lam2
+    return np.sqrt(lam1/lam2)
 
 
 
