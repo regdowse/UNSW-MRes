@@ -1212,6 +1212,20 @@ def axis_ratio(df):
     lam2 = 0.5*(df.sq11 + df.sq22) - np.sqrt(((df.sq11 - df.sq22)/2)**2 + df.sq12**2)  # minor
     return np.sqrt(lam1/lam2)
 
+def ellipse_aspect_ratio(q11, q12, q22, eps=1e-12):
+    q11 = np.asarray(np.abs(q11), float)
+    q12 = np.asarray(q12, float)
+    q22 = np.asarray(np.abs(q22), float)
+    tr  = q11 + q22
+    rad = np.sqrt((q11 - q22)**2 + 4*q12**2)
+    lam_min = 0.5*(tr - rad)
+    lam_max = 0.5*(tr + rad)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        r = np.sqrt(lam_max / np.maximum(lam_min, eps))
+    # mark non-SPD cases explicitly as nan
+    r = np.where(lam_min > 0, r, np.nan)
+    return r
+
 
 
 
