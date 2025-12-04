@@ -1213,9 +1213,11 @@ def axis_ratio(df):
     return np.sqrt(lam1/lam2)
 
 def ellipse_aspect_ratio(q11, q12, q22, eps=1e-12):
-    q11 = np.asarray(np.abs(q11), float)
+    # q11 = np.asarray(np.abs(q11), float)
+    q11 = np.asarray(q11, float)
     q12 = np.asarray(q12, float)
-    q22 = np.asarray(np.abs(q22), float)
+    # q22 = np.asarray(np.abs(q22), float)
+    q22 = np.asarray(q22, float)
     tr  = q11 + q22
     rad = np.sqrt((q11 - q22)**2 + 4*q12**2)
     lam_min = 0.5*(tr - rad)
@@ -1225,6 +1227,27 @@ def ellipse_aspect_ratio(q11, q12, q22, eps=1e-12):
     # mark non-SPD cases explicitly as nan
     r = np.where(lam_min > 0, r, np.nan)
     return r
+
+def phys_grad(F, X, Y, mask=None):
+    # index-space gradients
+    x_i, x_j = np.gradient(X)
+    y_i, y_j = np.gradient(Y)
+    F_i, F_j = np.gradient(F)
+    # Jacobian
+    J = x_i*y_j - x_j*y_i
+    # physical gradients
+    dFdx = ( F_i*y_j - F_j*y_i) / J
+    dFdy = (-F_i*x_j + F_j*x_i) / J
+    # handle singular cells
+    bad = np.isclose(J, 0)
+    dFdx[bad] = np.nan
+    dFdy[bad] = np.nan
+    # apply mask (1=ocean, 0=land)
+    if mask is not None:
+        m = mask.astype(bool)
+        dFdx = np.where(m, dFdx, np.nan)
+        dFdy = np.where(m, dFdy, np.nan)
+    return dFdx, dFdy
 
 
 
