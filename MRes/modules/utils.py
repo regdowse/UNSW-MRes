@@ -288,6 +288,7 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     Aq22 = -C1 / 2
     Aq12 = -gamma / 2
     denom = C1 * B1 + gamma**2
+    print(denom)
     if denom == 0:
         raise ZeroDivisionError("Denominator is zero.")
         
@@ -1248,6 +1249,72 @@ def phys_grad(F, X, Y, mask=None):
         dFdx = np.where(m, dFdx, np.nan)
         dFdy = np.where(m, dFdy, np.nan)
     return dFdx, dFdy
+
+def compute_core_mean(
+    df_eddies,
+    X_grid,
+    Y_grid,
+    mask_rho,
+    base_path=None,
+    varname=None,
+    fixed_field=None,
+    colname=None,
+):
+    """
+    Core-mean of either
+      - a 3D field (x,y,t) loaded as <varname>_<fnumber>.npy, or
+      - a fixed 2D field (x,y) passed in as fixed_field.
+    """
+    if fixed_field is None and (base_path is None or varname is None):
+        raise ValueError("Either fixed_field OR (base_path and varname) must be provided.")
+    mode_2d = fixed_field is not None
+    if colname is None:
+        if mode_2d:
+            colname = "field_core"
+        else:
+            colname = f"{varname}"
+    df = df_eddies[~df_eddies["TiltDis"].isna()].copy()
+    chunks = []
+    if mode_2d:
+        field2d = np.where(mask_rho, fixed_field, np.nan)
+    for fname, df_loc in df.groupby("fname"):
+        if not mode_2d:
+            fnumber  = int(fname[-8:-3])
+            base_day = fnumber + 1
+            data3d = np.load(f"{base_path}/{varname}_{fnumber:05}.npy")
+            data3d = np.where(mask_rho[:, :, None], data3d, np.nan)
+        df_loc = df_loc.copy().reset_index(drop=False)
+        core_vals = np.full(len(df_loc), np.nan)
+        for idx, row in enumerate(df_loc.itertuples(index=False)):
+            dx = X_grid - row.xc
+            dy = Y_grid - row.yc
+            rho2 = (
+                row.q11 * dx**2
+                + 2 * row.q12 * dx * dy
+                + row.q22 * dy**2
+            )
+            core_mask = rho2 <= row.Rc**2 / 2
+            if not core_mask.any():
+                continue
+            if mode_2d:
+                vals = field2d[core_mask]
+            else:
+                t_idx = int(row.Day - base_day)
+                vals = data3d[:, :, t_idx][core_mask]
+            core_vals[idx] = np.nanmean(vals)
+        chunks.append(pd.DataFrame({
+            "Eddy": df_loc["Eddy"].to_numpy(),
+            "Day":  df_loc["Day"].to_numpy(),
+            colname: core_vals
+        }))
+    df_core = pd.concat(chunks, ignore_index=True)
+    df_out = df_eddies.merge(
+        df_core[["Eddy", "Day", colname]],
+        how="left",
+        on=["Eddy", "Day"]
+    )
+    return df_out
+
 
 
 
