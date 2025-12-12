@@ -212,7 +212,7 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
 
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
-def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
+def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e6, plot_flag=False):
 
     x1, y1, u1, v1 = [np.asarray(a) for a in (x1, y1, u1, v1)]
     mask = ~np.isnan(x1) & ~np.isnan(y1) & ~np.isnan(u1) & ~np.isnan(v1)
@@ -288,7 +288,6 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     Aq22 = -C1 / 2
     Aq12 = -gamma / 2
     denom = C1 * B1 + gamma**2
-    print(denom)
     if denom == 0:
         raise ZeroDivisionError("Denominator is zero.")
         
@@ -316,17 +315,17 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e5, plot_flag=False):
     vi = np.concatenate([v1f, v2])
 
     # fit Rc, psi0, A
-    dx, dy = xi - xc, yi - yc
-    rho2 = Q[0,0]*dx**2 + 2*Q[1,0]*dx*dy + Q[1,1]*dy**2
-    Qr = np.sqrt((Q[0,0]*dx + Q[1,0]*dy)**2 + (Q[1,0]*dx + Q[1,1]*dy)**2)
-    vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
+    df = psi_params(xc, yc, Q, xi*1e3, yi*1e3, ui, vi) # input data into m
     if A < 0:
-        mask = vt <= 0
+        mask = df.vt <= 0
     else:
-        mask = vt >= 0
-    rho2, Qr, vt = rho2[mask], Qr[mask], vt[mask]
-    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
+        mask = df.vt >= 0
+    rho2, Qr, vt = df.rho2[mask], df.Qr[mask], df.vt[mask]
+
+    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2/1e6, Qr/1e3, vt, A0=A,
                                              plot=plot_flag, Rc_max=Rc_max)
+    # Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=None,
+    #                                          plot=plot_flag, Rc_max=Rc_max)
 
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
@@ -477,8 +476,8 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
 
         if ax is None:
             _, ax = plt.subplots()
-        ax.scatter(r_data, np.abs(vt), s=8, label='Observed')
-        ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=4, color='#ff7f0e')
+        ax.scatter(r_data, np.abs(vt), s=20, label='Observed', marker='x')
+        ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=2, color='#ff7f0e')
         ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='#ff7f0e')
         ax.set_xlabel(r'$\rho$')
         ax.set_ylabel(r'$|v_t^\star|$')
