@@ -183,6 +183,7 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
     l0 = -b / c
     r0 = a / c
     w = 2 * c
+    print(f'Slope {c*1e-3}')
 
     xc, yc = l0, r0
 
@@ -198,15 +199,13 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
     xi, yi, ui, vi = l, [0]*len(l), VT, VN
     
     # fit Rc, psi0, A
-    dx, dy = xi - xc, yi - yc
-    rho2 = Q[0,0]*dx**2 + 2*Q[1,0]*dx*dy + Q[1,1]*dy**2
-    Qr = np.sqrt((Q[0,0]*dx + Q[1,0]*dy)**2 + (Q[1,0]*dx + Q[1,1]*dy)**2)
-    vt = tangential_velocity(xi, yi, ui, vi, xc, yc, Q)
+    df = psi_params(xc, yc, Q, xi, yi, ui, vi) # input data into m
     if A < 0:
-        mask = vt <= 0
+        mask = df.vt <= 0
     else:
-        mask = vt >= 0
-    rho2, Qr, vt = rho2[mask], Qr[mask], vt[mask]
+        mask = df.vt >= 0
+    rho2, Qr, vt = df.rho2[mask], df.Qr[mask], df.vt[mask]
+
     Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
                                              plot=plot_flag, Rc_max=Rc_max)
 
@@ -315,18 +314,15 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e6, plot_flag=False):
     vi = np.concatenate([v1f, v2])
 
     # fit Rc, psi0, A
-    df = psi_params(xc, yc, Q, xi*1e3, yi*1e3, ui, vi) # input data into m
+    df = psi_params(xc, yc, Q, xi, yi, ui, vi) # input data into m
     if A < 0:
         mask = df.vt <= 0
     else:
         mask = df.vt >= 0
     rho2, Qr, vt = df.rho2[mask], df.Qr[mask], df.vt[mask]
 
-    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2/1e6, Qr/1e3, vt, A0=A,
+    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
                                              plot=plot_flag, Rc_max=Rc_max)
-    # Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=None,
-    #                                          plot=plot_flag, Rc_max=Rc_max)
-
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 
