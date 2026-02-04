@@ -183,8 +183,7 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
     l0 = -b / c
     r0 = a / c
     w = 2 * c
-    print(f'Slope {c*1e-3}')
-
+    
     xc, yc = l0, r0
 
     Aq11, Aq12, Aq22 = w/4, 0.0, w/4
@@ -381,7 +380,67 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None, r2_flag=False):
         return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, r2_core, r2_outer_core
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
+def dopioe_pipeliner(nxc, nyc, cyc, ut, vt, X_new, Y_new, r=30000):
 
+    R_grid = np.hypot(nxc - X_new, nyc - Y_new)
+    ic, jc = map(int, np.unravel_index(np.argmin(R_grid), R_grid.shape))
+
+    # DOPIOE wont work if too close to boundary
+    x_new = X_new[:, 0]
+    y_new = Y_new[0, :]
+    dx = np.max(np.diff(x_new))  # spacing in x-direction
+    dy = np.max(np.diff(y_new))  # spacing in y-direction
+    cell_size = np.max([dx, dy])        # average cell size in Euclidean units
+    margin = int(np.ceil(r / cell_size)) 
+
+    if (ic < margin or ic >= X_new.shape[0] - margin or
+            jc < margin or jc >= X_new.shape[1] - margin):
+        return np.nan, np.nan, np.nan, np.array([[np.nan, np.nan],
+                                                [np.nan, np.nan]]), np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # horizontal transect (constant y = y[jc])
+    x_mask = np.abs(x_new - nxc) <= r
+    x1 = x_new[x_mask]
+    y1 = np.full_like(x1, y_new[jc])
+    u1 = ut[x_mask, jc]
+    v1 = vt[x_mask, jc]
+    
+    # vertical transect (constant x = x[ic])
+    y_mask = np.abs(y_new - nyc) <= r
+    y2 = y_new[y_mask]
+    x2 = np.full_like(y2, x_new[ic])
+    u2 = ut[ic, y_mask]
+    v2 = vt[ic, y_mask]
+    
+    xc, yc, w, Q, _, _, A0 = dopioe(x1, y1, u1, v1, x2, y2, u2, v2)
+
+    cyc_DOPIOE = 'CE' if w < 0 else 'AE'
+    
+    if (cyc_DOPIOE != cyc) or (np.hypot(nxc - xc, nyc - yc) > 50000):
+        return np.nan, np.nan, np.nan, np.array([[np.nan, np.nan],
+                                                [np.nan, np.nan]]), np.nan, np.nan, np.nan, np.nan, np.nan
+    else:
+        w *= 1e-3 # to s^-1
+
+        radii = find_directional_radii(ut, vt, X_new, Y_new, xc, yc, Q)
+        R = np.mean([radii['up'], radii['right'], radii['down'], radii['left']])
+
+        q11, q12, q22 = Q[0,0], Q[0,1], Q[1,1]
+        dx, dy = X_new - xc, Y_new - yc
+        rho2 = q11*dx**2 + 2*q12*dx*dy + q22*dy**2
+        rho_search = np.sqrt(np.where(rho2 < 0, np.nan, rho2))
+        
+        mask_outer = rho_search < max(min(R*1.75, 200000), 30000) 
+        axi, ayi, aui, avi = X_new[mask_outer], Y_new[mask_outer], ut[mask_outer], vt[mask_outer]
+        
+        df = psi_params(xc, yc, Q, axi, ayi, aui, avi)
+        Rc, psi0, A = fit_psi_params(df.rho2, df.Qr, df.vt, A0=A0, Rc_max=200000)
+
+        if np.sign(A) != np.sign(w):
+            Rc, psi0, A = np.nan, np.nan, A0
+            return xc, yc, w, Q, Rc, psi0, A, R, df
+        
+    return xc, yc, w, Q, Rc, psi0, A, R, df
 
 
 
@@ -1222,7 +1281,7 @@ def ellipse_aspect_ratio(q11, q12, q22, eps=1e-12):
         r = np.sqrt(lam_max / np.maximum(lam_min, eps))
     # mark non-SPD cases explicitly as nan
     r = np.where(lam_min > 0, r, np.nan)
-    return r
+    return r.item()
 
 def phys_grad(F, X, Y, mask=None):
     # index-space gradients

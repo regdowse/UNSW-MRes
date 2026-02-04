@@ -1,0 +1,13 @@
+
+# Stuff to ignore
+*.png
+*.pkl
+*.mat
+*.gif
+ESPRA.ipynb
+Error_Data/
+ROMS_paper_Rc.ipynb
+SADCP_ESPRA_OLD.ipynb
+Untitled.ipynb
+Untitled1.ipynb
+		
