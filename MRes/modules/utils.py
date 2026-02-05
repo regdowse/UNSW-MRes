@@ -531,9 +531,12 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
 
         if ax is None:
             _, ax = plt.subplots()
-        ax.scatter(r_data, np.abs(vt), s=20, label='Observed', marker='x')
-        ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=2, color='#ff7f0e')
-        ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='#ff7f0e')
+        # ax.scatter(r_data, np.abs(vt), s=20, label='Observed', marker='x')
+        ax.scatter(r_data, np.abs(vt), s=20, label='Observed', marker='.')
+        # ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=2, color='#ff7f0e')
+        ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=3, color='#ff7f0e')
+        # ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='#ff7f0e')
+        ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=3, color='#ff7f0e')
         ax.set_xlabel(r'$\rho$')
         ax.set_ylabel(r'$|v_t^\star|$')
         # ax.legend()
