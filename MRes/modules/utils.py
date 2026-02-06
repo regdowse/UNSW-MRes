@@ -212,6 +212,84 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False, df_flag=False):
         return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, df
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
+def obs_moca(l, VT, VN, Rc_max=1e5, plot_flag=False, df_flag=False):
+
+    l, VT, VN = [np.asarray(a) for a in (l, VT, VN)]
+    mask = ~np.isnan(l) & ~np.isnan(VT) & ~np.isnan(VT)
+    l_all, VT_all, VN_all = l[mask], VT[mask], VN[mask]
+
+    if len(l) == 0:
+        nan2 = np.array([[np.nan, np.nan], [np.nan, np.nan]])
+        return (
+            np.nan,
+            np.nan,  
+            np.nan,  
+            nan2,  
+            np.nan,  
+            np.nan,
+            nan2
+        )
+    def find_root(x, y):
+        coeffs = np.polyfit(x, y, 3)
+        roots = np.roots(np.poly1d(coeffs))
+        real_roots = roots[np.isreal(roots)].real
+        mid = x[len(x)//2]
+        return real_roots[np.argmin(np.abs(mid - real_roots))]
+    def tang_at_root(x, y, rx):
+        coeffs = np.polyfit(x, y, 3)
+        deriv = np.polyder(coeffs)
+        slope = np.polyval(deriv, rx)
+        intercept = np.polyval(coeffs, rx) - slope * rx
+        return slope, intercept
+    def cubic_interpolate(x, y, root):
+        coeffs = np.polyfit(x, y, 3)
+        return np.polyval(coeffs, root)
+
+    # Find point of closest approach
+    root = find_root(l, VN)
+    c, b = tang_at_root(l, VN, root)  # c: slope, b: intercept
+    a = cubic_interpolate(l, VT, root)
+
+    # Use core data to find xc, yc
+    mask = np.abs(l-root) < 30e3 #m
+    l, VT, VN = l_all[mask], VT_all[mask], VN_all[mask]
+    
+    root = find_root(l, VN)
+    c, b = tang_at_root(l, VN, root)  # c: slope, b: intercept
+    a = cubic_interpolate(l, VT, root)
+    
+    l0 = -b / c
+    r0 = a / c
+    w = 2 * c
+    
+    xc, yc = l0, r0
+
+    Aq11, Aq12, Aq22 = w/4, 0.0, w/4
+
+    AQ = np.array([[Aq11, Aq12], [Aq12, Aq22]])
+    detAQ = np.linalg.det(AQ)
+    A = (abs(detAQ))**(0.5)
+    A = np.sign(Aq11)*A
+    Q = AQ / A
+    q11, q12, q22 = Q[0,0], 0.0, Q[1,1]
+
+    xi, yi, ui, vi = l_all, [0]*len(l_all), VT_all, VN_all
+    
+    # fit Rc, psi0, A
+    df = psi_params(xc, yc, Q, xi, yi, ui, vi) # input data into m
+    if A < 0:
+        mask = df.vt <= 0
+    else:
+        mask = df.vt >= 0
+    rho2, Qr, vt = df.rho2[mask], df.Qr[mask], df.vt[mask]
+
+    Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
+                                             plot=plot_flag, Rc_max=Rc_max)
+
+    if df_flag:
+        return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, df
+    return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
+
 def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e6, plot_flag=False):
 
     x1, y1, u1, v1 = [np.asarray(a) for a in (x1, y1, u1, v1)]
