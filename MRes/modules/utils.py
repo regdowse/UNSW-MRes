@@ -139,7 +139,7 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
     
 
 ################################################ ESP Methods ################################################
-def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
+def moca(l, VT, VN, Rc_max=1e5, plot_flag=False, df_flag=False):
 
     l, VT, VN = [np.asarray(a) for a in (l, VT, VN)]
     mask = ~np.isnan(l) & ~np.isnan(VT) & ~np.isnan(VT)
@@ -208,6 +208,8 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False):
     Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
                                              plot=plot_flag, Rc_max=Rc_max)
 
+    if df_flag:
+        return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, df
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e6, plot_flag=False):
