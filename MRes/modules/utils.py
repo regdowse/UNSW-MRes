@@ -1346,8 +1346,12 @@ def eccentricity(df):
     return np.sqrt(1 - (lam2/lam1)**2)
 
 def axis_ratio(df):
-    lam1 = 0.5*(df.sq11 + df.sq22) + np.sqrt(((df.sq11 - df.sq22)/2)**2 + df.sq12**2)  # major
-    lam2 = 0.5*(df.sq11 + df.sq22) - np.sqrt(((df.sq11 - df.sq22)/2)**2 + df.sq12**2)  # minor
+    if 'sq11' in df.columns:
+        lam1 = 0.5*(df.sq11 + df.sq22) + np.sqrt(((df.sq11 - df.sq22)/2)**2 + df.sq12**2)  # major
+        lam2 = 0.5*(df.sq11 + df.sq22) - np.sqrt(((df.sq11 - df.sq22)/2)**2 + df.sq12**2)  # minor
+    else:
+        lam1 = 0.5*(df.q11 + df.q22) + np.sqrt(((df.q11 - df.q22)/2)**2 + df.q12**2)  # major
+        lam2 = 0.5*(df.q11 + df.q22) - np.sqrt(((df.q11 - df.q22)/2)**2 + df.q12**2)  # minor
     return np.sqrt(lam1/lam2)
 
 def ellipse_aspect_ratio(q11, q12, q22, eps=1e-12):
