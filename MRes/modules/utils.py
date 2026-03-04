@@ -1354,6 +1354,10 @@ def axis_ratio(df):
         lam2 = 0.5*(df.q11 + df.q22) - np.sqrt(((df.q11 - df.q22)/2)**2 + df.q12**2)  # minor
     return np.sqrt(lam1/lam2)
 
+def axis_ratio_from_Q(Q):
+    lam = np.abs(np.linalg.eigvalsh(Q))
+    return np.sqrt(lam.max() / lam.min())
+
 def ellipse_aspect_ratio(q11, q12, q22, eps=1e-12):
     # q11 = np.asarray(np.abs(q11), float)
     q11 = np.asarray(q11, float)
