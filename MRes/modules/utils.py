@@ -207,6 +207,9 @@ def moca(l, VT, VN, Rc_max=1e5, plot_flag=False, df_flag=False):
 
     Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
                                              plot=plot_flag, Rc_max=Rc_max)
+    # update vorticty with A
+    # A_opt = A_opt*1e-3
+    w = 2*A_opt*(q11 + q22)
 
     if df_flag:
         return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, df
@@ -285,6 +288,10 @@ def obs_moca(l, VT, VN, Rc_max=1e5, plot_flag=False, df_flag=False):
 
     Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
                                              plot=plot_flag, Rc_max=Rc_max)
+
+    # update vorticty with A
+    # A_opt = A_opt*1e-3
+    w = 2*A_opt*(q11 + q22)
 
     if df_flag:
         return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, df
@@ -402,6 +409,11 @@ def dopioe(x1, y1, u1, v1, x2, y2, u2, v2, Rc_max=1e6, plot_flag=False):
 
     Rc_opt, psi0_opt, A_opt = fit_psi_params(rho2, Qr, vt, A0=A,
                                              plot=plot_flag, Rc_max=Rc_max)
+
+    # update vorticty with A
+    # A_opt = A_opt*1e-3
+    w = 2*A_opt*(q11 + q22)
+    
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
 
 
@@ -456,6 +468,11 @@ def espra(xi, yi, ui, vi, Rc_max=1e5, plot_flag=False, ax=None, r2_flag=False):
 
     Rc_opt, psi0_opt, A_opt, r2_outer_core = fit_psi_params(rho2, Qr, vt, A0=A,
                                                             plot=plot_flag, Rc_max=Rc_max, ax=ax, r2_flag=True)
+
+    # update vorticty with A
+    # A_opt = A_opt*1e-3
+    w = 2*A_opt*(Q[0,0] + Q[1,1])
+    
     if r2_flag:
         return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt, r2_core, r2_outer_core
     return xc, yc, w, Q, Rc_opt, psi0_opt, A_opt
@@ -519,10 +536,12 @@ def dopioe_pipeliner(nxc, nyc, cyc, ut, vt, X_new, Y_new, r=30000):
         if np.sign(A) != np.sign(w):
             Rc, psi0, A = np.nan, np.nan, A0
             return xc, yc, w, Q, Rc, psi0, A, R, df
+
+        # update vorticty with A
+        # A = A*1e-3
+        w = 2*A*(q11 + q22)
         
     return xc, yc, w, Q, Rc, psi0, A, R, df
-
-
 
 
 
