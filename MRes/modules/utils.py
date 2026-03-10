@@ -574,7 +574,7 @@ def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
 
 def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
                    maxfev=10000, Rc_max=1e5, r2_flag=False,
-                   rho_plot_max=None, n_curve=400):
+                   rho_plot_max=None, n_curve=400, clr='g'):
     import numpy as np
     from scipy.optimize import curve_fit
     import matplotlib.pyplot as plt
@@ -630,18 +630,98 @@ def fit_psi_params(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
 
         if ax is None:
             _, ax = plt.subplots()
-        ax.scatter(r_data, np.abs(vt), s=20, label='Observed', marker='x', zorder=2)
+        ax.scatter(r_data, np.abs(vt), s=40, label='Observed', marker='x', zorder=2, color=clr)
         # ax.scatter(r_data, np.abs(vt), s=20, label='Observed', marker='.')
         # ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=2, color='#ff7f0e')
-        ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=3, color='#ff7f0e', zorder=1)
+        ax.plot(r_grid, np.abs(vt_grid), label='Fit', lw=2, color='c', zorder=1)
         # ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='#ff7f0e')
-        ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=2, color='m')#'#ff7f0e')
+        ax.axvline(x=Rc_opt/np.sqrt(2), ls='--', label=r'$\rho_{\max}$', lw=1, color=clr)#'#ff7f0e')
         ax.set_xlabel(r'$\rho$')
         ax.set_ylabel(r'$|v_t^\star|$')
         # ax.legend()
         ax.set_title(f'Best Fit: A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}, R²={r2:.2f}')
 
     return (Rc_opt, psi0_opt, A_opt, r2) if r2_flag else (Rc_opt, psi0_opt, A_opt)
+
+def fit_psi_params_clean(rho2, Qr, vt, A0=None, Rc0=None, plot=False, ax=None,
+                   maxfev=10000, Rc_max=1e5, r2_flag=False,
+                   rho_plot_max=None, n_curve=400):
+    
+    from scipy.optimize import curve_fit
+
+    rho2 = np.asarray(rho2, float)
+    Qr   = np.asarray(Qr, float)
+    vt   = np.asarray(vt, float)
+
+    m = np.isfinite(rho2) & np.isfinite(Qr) & np.isfinite(vt) & (rho2 >= 0) & (Qr != 0)
+    if not np.any(m):
+        return (np.nan, np.nan, np.nan, np.nan) if r2_flag else (np.nan, np.nan, np.nan)
+
+    rho2 = rho2[m]; Qr = Qr[m]; vt = vt[m]
+
+    # v*_t = v_t * (rho/Qr)
+    rho = np.sqrt(rho2)
+    vt = vt * (rho / Qr)
+
+    def vt_model(rho2_, A, Rc):
+        return 2.0 * A * np.sqrt(rho2_) * np.exp(-rho2_ / (Rc * Rc))
+
+    # initial Rc0 from location of max |vt|
+    i = np.nanargmax(np.abs(vt))
+    rho_max = rho[i]
+    if Rc0 is None:
+        Rc0 = max(rho_max * np.sqrt(2.0), 1e-6)
+
+    if A0 is None:
+        denom = 2.0 * rho * np.exp(-rho2 / (Rc0 * Rc0))
+        ok = np.abs(denom) > 0
+        A0 = np.nanmedian(vt[ok] / denom[ok]) if np.any(ok) else 0.0
+    if not np.isfinite(A0):
+        A0 = 0.0
+
+    try:
+        popt, _ = curve_fit(
+            vt_model, rho2, vt, p0=[A0, Rc0],
+            bounds=([-np.inf, 1e-8], [np.inf, np.inf]),
+            maxfev=maxfev
+        )
+        A_opt, Rc_opt = popt
+    except Exception:
+        A_opt, Rc_opt = A0, Rc0
+
+    if (not np.isfinite(Rc_opt)) or (Rc_opt > Rc_max):
+        A_opt, Rc_opt = A0, Rc0
+
+    psi0_opt = -A_opt * Rc_opt**2
+
+    vt_fit = vt_model(rho2, A_opt, Rc_opt)
+    ss_res = np.sum((vt - vt_fit)**2)
+    ss_tot = np.sum((vt - vt.mean())**2)
+    r2 = 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+
+    if plot:
+        if ax is None:
+            _, ax = plt.subplots()
+
+        if rho_plot_max is None:
+            rho_plot_max = float(np.nanmax(rho)) if rho.size else Rc_opt
+
+        r_grid = np.linspace(0.0, rho_plot_max, n_curve)
+        vt_grid = vt_model(r_grid**2, A_opt, Rc_opt)
+
+        core_mask = rho <= 30
+        ax.scatter(rho[core_mask], np.abs(vt[core_mask]), s=20, marker='.', label='Core observed', color='m')
+        ax.scatter(rho[~core_mask], np.abs(vt[~core_mask]), s=20, marker='.', label='Outer-core observed', color='g')
+        ax.plot(r_grid, np.abs(vt_grid), lw=2, label='Fit', color='b')
+        ax.axvline(Rc_opt/np.sqrt(2), ls='--', lw=2, label=r'$\rho_{\max}$', color='r')
+
+        ax.set_xlabel(r'$\rho$')
+        ax.set_ylabel(r'$|v_t^\star|$')
+        ax.set_title(f'A={A_opt:.4g}, Rc={Rc_opt:.4g}, psi0={psi0_opt:.4g}, R²={r2:.2f}')
+        ax.legend()
+
+    return (Rc_opt, psi0_opt, A_opt, r2) if r2_flag else (Rc_opt, psi0_opt, A_opt)
+
 
 def find_directional_radii(u, v, x, y, xc, yc, Q, return_index=False):
     """
