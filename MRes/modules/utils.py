@@ -130,9 +130,148 @@ def plot_ellipse(Q, center=(0, 0), scale=1):
 
 
 
+############# refined ##################
 
+def out_core_param_fit(
+    rho2, Qr, vt,
+    Omega0=None, Rc0=None,
+    plot=False, ax=None,
+    maxfev=10000, Rc_max=1e5,
+    r2_flag=False,
+    rho_plot_max=None, n_curve=400,
+    km_flag=False,
+    ci_flag=False,
+    pred_flag=False
+):
 
+    from scipy.optimize import curve_fit
+    import matplotlib.pyplot as plt
 
+    rho2 = np.asarray(rho2, float)
+    Qr   = np.asarray(Qr, float)
+    vt   = np.asarray(vt, float)
+
+    m = np.isfinite(rho2) & np.isfinite(Qr) & np.isfinite(vt) & (rho2 >= 0) & (Qr != 0)
+    if not np.any(m):
+        return (np.nan, np.nan, np.nan, np.nan) if r2_flag else (np.nan, np.nan, np.nan)
+
+    rho2 = rho2[m]
+    Qr   = Qr[m]
+    vt   = vt[m]
+
+    rho = np.sqrt(rho2)
+    vt = vt * (rho / Qr)
+
+    def vt_model(r2, Omega, Rc):
+        return Omega * np.sqrt(r2) * np.exp(-r2 / (Rc**2))
+
+    i = np.nanargmax(np.abs(vt))
+    rho_max = rho[i]
+
+    if Rc0 is None:
+        Rc0 = max(rho_max * np.sqrt(2), 1e-6)
+
+    if Omega0 is None:
+        denom = rho * np.exp(-rho2 / (Rc0**2))
+        ok = np.abs(denom) > 0
+        Omega0 = np.nanmedian(vt[ok] / denom[ok]) if np.any(ok) else 0
+
+    if not np.isfinite(Omega0):
+        Omega0 = 0
+
+    pcov = None
+    try:
+        popt, pcov = curve_fit(
+            vt_model, rho2, vt,
+            p0=[Omega0, Rc0],
+            bounds=([-np.inf, 1e-8], [np.inf, np.inf]),
+            maxfev=maxfev
+        )
+        Omega_opt, Rc_opt = popt
+    except:
+        Omega_opt, Rc_opt = Omega0, Rc0
+
+    if (not np.isfinite(Rc_opt)) or (Rc_opt > Rc_max):
+        Omega_opt, Rc_opt = Omega0, Rc0
+        pcov = None
+
+    psi0_opt = -0.5 * Omega_opt * Rc_opt**2
+
+    vt_fit = vt_model(rho2, Omega_opt, Rc_opt)
+
+    ss_res = np.sum((vt - vt_fit)**2)
+    ss_tot = np.sum((vt - vt.mean())**2)
+    R2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
+
+    dof = max(len(vt) - 2, 1)
+    sigma2 = ss_res / dof
+
+    if plot:
+
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        if rho_plot_max is None:
+            rho_plot_max = np.nanmax(rho)
+
+        r_grid = np.linspace(0, rho_plot_max, n_curve)
+        r2_grid = r_grid**2
+
+        vt_grid = vt_model(r2_grid, np.abs(Omega_opt), Rc_opt)
+
+        if km_flag:
+            core_mask = rho <= 30
+        else:
+            core_mask = rho <= 30_000
+
+        ax.scatter(rho[core_mask], np.abs(vt[core_mask]), s=10, color='m', label='Core observed')
+        ax.scatter(rho[~core_mask], np.abs(vt[~core_mask]), s=10, color='g', label='Outer-core \nobserved')
+
+        ax.plot(r_grid, np.abs(vt_grid), lw=2, color='b', label='')
+        ax.axvline(Rc_opt / np.sqrt(2), ls='--', color='r', label='', lw=2)
+
+        if pcov is not None:
+
+            exp_term = np.exp(-r2_grid / (Rc_opt**2))
+
+            dOmega = np.sqrt(r2_grid) * exp_term
+            dRc = 2 * Omega_opt * (r2_grid**1.5) * exp_term / (Rc_opt**3)
+
+            J = np.vstack([dOmega, dRc]).T
+            var_model = np.einsum("ij,jk,ik->i", J, pcov, J)
+
+            if ci_flag:
+                se_model = np.sqrt(np.maximum(var_model, 0))
+                lo = vt_grid - 1.96 * se_model
+                hi = vt_grid + 1.96 * se_model
+
+                ax.fill_between(
+                    r_grid, np.abs(lo), np.abs(hi),
+                    color='orange', alpha=.2, label='95% CI'
+                )
+
+            if pred_flag:
+                se_pred = np.sqrt(np.maximum(var_model + sigma2, 0))
+                lo = vt_grid - 1.96 * se_pred
+                hi = vt_grid + 1.96 * se_pred
+
+                ax.fill_between(
+                    r_grid, lo, hi,
+                    color='b', alpha=.15, label=''
+                )
+
+        ax.set_xlabel(r'$\rho$')
+        ax.set_ylabel(r'$|v_t^\star|$')
+
+        ax.set_title(
+            f"Omega={Omega_opt:.3g}, Rc={Rc_opt:.3g}, psi0={psi0_opt:.3g}, R²={R2:.2f}"
+        )
+        ax.set_ylim(0, None); ax.set_xlim(0, None)
+
+        ax.legend(loc='upper right')
+
+    return (Rc_opt, psi0_opt, Omega_opt, R2) if r2_flag else (Rc_opt, psi0_opt, Omega_opt)
+    
 
 
 
