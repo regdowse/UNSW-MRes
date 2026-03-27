@@ -141,7 +141,7 @@ def out_core_param_fit(
     rho_plot_max=None, n_curve=400,
     km_flag=False,
     ci_flag=False,
-    pred_flag=False
+    pred_flag=False,
 ):
 
     from scipy.optimize import curve_fit
@@ -224,7 +224,7 @@ def out_core_param_fit(
         else:
             core_mask = rho <= 30_000
 
-        ax.scatter(rho[core_mask], np.abs(vt[core_mask]), s=10, color='m', label='Core observed')
+        ax.scatter(rho[core_mask], np.abs(vt[core_mask]), s=10, color='m', label='Inner-core \nobserved')
         ax.scatter(rho[~core_mask], np.abs(vt[~core_mask]), s=10, color='g', label='Outer-core \nobserved')
 
         ax.plot(r_grid, np.abs(vt_grid), lw=2, color='b', label='')
@@ -268,7 +268,7 @@ def out_core_param_fit(
         )
         ax.set_ylim(0, None); ax.set_xlim(0, None)
 
-        ax.legend(loc='upper right')
+        ax.legend(loc='upper left')
 
     return (Rc_opt, psi0_opt, Omega_opt, R2) if r2_flag else (Rc_opt, psi0_opt, Omega_opt)
     
