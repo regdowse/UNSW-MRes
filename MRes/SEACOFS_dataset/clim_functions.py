@@ -150,3 +150,105 @@ def nencioli(u, v, X, Y, a, b, flip_sign=False):
         eddy[:, 2] *= -1  # optional convention flip only (no hemisphere logic in Cartesian)
 
     return eddy_uv, eddy_c, eddy
+
+
+def doppio_pipeliner(ic, jc, ut, vt, X, Y, r=30_000.0):
+    '''
+    Return orthogonal transects centered at grid index (ic, jc) with radius r.
+    '''
+    x = np.asarray(X[:, 0], float)
+    y = np.asarray(Y[0, :], float)
+    nxc = x[ic]
+    nyc = y[jc]
+
+    # x-transect: y = y[jc]
+    i0 = np.searchsorted(x, nxc - r, side="left")
+    i1 = np.searchsorted(x, nxc + r, side="right")
+
+    x1 = x[i0:i1]
+    y1 = np.full(x1.size, nyc)
+    u1 = ut[i0:i1, jc]
+    v1 = vt[i0:i1, jc]
+
+    # y-transect: x = x[ic]
+    j0 = np.searchsorted(y, nyc - r, side="left")
+    j1 = np.searchsorted(y, nyc + r, side="right")
+
+    y2 = y[j0:j1]
+    x2 = np.full(y2.size, nxc)
+    u2 = ut[ic, j0:j1]
+    v2 = vt[ic, j0:j1]
+
+    return x1, y1, u1, v1, x2, y2, u2, v2
+
+def tangential_velocity(xp, yp, up, vp, xc, yc, Q, det1=False):
+    Q = np.asarray(Q, float)
+    if Q.shape == (3,):
+        q11, q12, q22 = Q
+        Q = np.array([[q11, q12], [q12, q22]], float)
+    if det1:
+        d = np.linalg.det(Q)
+        if d != 0:
+            Q /= np.sqrt(d)
+
+    xp, yp, up, vp = (np.asarray(a, float) for a in (xp, yp, up, vp))
+    r   = np.stack((xp - xc, yp - yc), axis=-1)
+    g   = 2.0 * (r @ Q.T)                    # ∇F
+    J   = np.array([[0., -1.], [1., 0.]])    # +90° rot
+    tau = g @ J.T                             # tangent
+    nrm = np.linalg.norm(tau, axis=-1, keepdims=True)
+    t_hat = np.divide(tau, nrm, out=np.zeros_like(tau), where=nrm > 0)
+
+    vel = np.stack((up, vp), axis=-1)
+    vt  = np.sum(vel * t_hat, axis=-1)
+    vt  = np.where(nrm.squeeze() > 0, vt, np.nan)
+    return vt
+
+def find_directional_radii(u, v, x, y, xc, yc, Q, return_index=False):
+    """
+    Returns dict of 'up','right','down','left' where each value is either:
+      - steps from (nic,njc) where |v_theta| stops growing (return_index=True), or
+      - Euclidean distance from (xc,yc) to that stopping point (return_index=False).
+    Stops early if a NaN is encountered.
+    """
+    dis = np.hypot(x - xc, y - yc)
+    dis_f = np.where(np.isfinite(dis), dis, np.inf)
+    nic, njc = np.unravel_index(np.argmin(dis_f), dis.shape)
+
+    def walk(di, dj, max_r):
+        v_old = 0.0
+        steps = 0
+        for r in range(1, max_r + 1):
+            i, j = nic + di * r, njc + dj * r
+            vt = np.abs(tangential_velocity(x[i, j], y[i, j], u[i, j], v[i, j], xc, yc, Q))
+            if np.isnan(vt) or vt < v_old:
+                break
+            v_old = vt
+            steps = r
+        return steps
+
+    steps = {
+        'up':    walk(-1,  0, nic),
+        'right': walk( 0,  1, u.shape[1] - njc - 1),
+        'down':  walk( 1,  0, u.shape[0] - nic - 1),
+        'left':  walk( 0, -1, njc),
+    }
+
+    if return_index:
+        return steps
+
+    dists = {}
+    for direction, r in steps.items():
+        if r == 0:
+            dists[direction] = 0.0
+        else:
+            if direction == 'up':
+                i0, j0 = nic - r, njc
+            elif direction == 'right':
+                i0, j0 = nic, njc + r
+            elif direction == 'down':
+                i0, j0 = nic + r, njc
+            else:
+                i0, j0 = nic, njc - r
+            dists[direction] = float(np.hypot(x[i0, j0] - xc, y[i0, j0] - yc))
+    return dists
