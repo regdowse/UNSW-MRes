@@ -1,4 +1,37 @@
 import numpy as np
+import pandas as pd
+from scipy.spatial import cKDTree
+import time
+import netCDF4 as nc
+import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
+
+fname = f'/srv/scratch/z3533156/26year_BRAN2020/outer_avg_01461.nc'
+dataset = nc.Dataset(fname)
+lon_rho = np.transpose(dataset.variables['lon_rho'], axes=(1, 0))
+lat_rho = np.transpose(dataset.variables['lat_rho'], axes=(1, 0))
+mask_rho = np.transpose(dataset.variables['mask_rho'], axes=(1, 0))
+h = np.transpose(dataset.variables['h'], axes=(1, 0))
+f = np.transpose(dataset.variables['f'], axes=(1, 0))
+angle = dataset.variables['angle'][0, 0]
+z_r = np.load('/srv/scratch/z5297792/z_r.npy')
+z_r = np.transpose(z_r, (1, 2, 0))
+def distance(lat1, lon1, lat2, lon2):
+    EARTH_RADIUS = 6357
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    a = np.sin(dlat/2)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2)**2
+    return EARTH_RADIUS * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+j_mid, i_mid = lon_rho.shape[1] // 2, lon_rho.shape[0] // 2
+dx = distance(lat_rho[:-1, j_mid], lon_rho[:-1, j_mid],
+              lat_rho[1:, j_mid], lon_rho[1:, j_mid])
+dy = distance(lat_rho[i_mid, :-1], lon_rho[i_mid, :-1],
+              lat_rho[i_mid, 1:], lon_rho[i_mid, 1:])
+x_grid = np.insert(np.cumsum(dx), 0, 0)
+y_grid = np.insert(np.cumsum(dy), 0, 0)
+X_grid, Y_grid = np.meshgrid(x_grid, y_grid, indexing='ij')
+
+
 
 def nencioli(u, v, X, Y, a, b, flip_sign=False):
     """
@@ -269,3 +302,371 @@ def compute_AR_from_Q(Q):
     AR[lam_min <= 0] = np.nan
 
     return AR
+
+def day_plot(day, df_eddies):
+
+    fnumber = 1461 + ((day - 1462) // 30)*30
+    fname = f'/srv/scratch/z3533156/26year_BRAN2020/outer_avg_{fnumber:05}.nc'
+    dataset = nc.Dataset(fname)
+    u_east = np.transpose(dataset['u_eastward'][:].data, axes=(3, 2, 1, 0))[:, :, -1, :].squeeze()
+    v_north = np.transpose(dataset['v_northward'][:].data, axes=(3, 2, 1, 0))[:, :, -1, :].squeeze()
+    ocean_time = dataset.variables['ocean_time'][:].data / 86400
+    t = np.where(day==ocean_time)[0][0]
+    ut, vt = u_east[:, :, t], v_north[:, :, t] # these are the surface velocities for that day in SEACOFS model
+
+    df_day = df_eddies[df_eddies.Day.eq(day)].copy() # Eddy df for that day
+
+    cs = np.hypot(ut, vt)
+
+    fig, ax = plt.subplots(figsize=(8, 10))
+    im = ax.pcolor(X_grid, Y_grid, cs, shading='nearest', vmin=0, vmax=2.5, cmap='Blues_r')
+    fig.colorbar(im, ax=ax, label=r'Current Speed [ms$^{-1}$]')
+
+    clrs = np.where(df_day.Cyc.eq('CE'), 'c', 'r')
+    ax.scatter(df_day.xc, df_day.yc, c=clrs, edgecolors='k', linewidths=0.8, s=60, zorder=10)
+
+    if 'Q' not in df_day.columns:
+        df_day['Q'] = list(
+            np.stack([
+                np.stack([df_day.q11.values, df_day.q12.values], axis=1),
+                np.stack([df_day.q12.values, df_day.q22.values], axis=1)
+            ], axis=1)
+        )
+
+    for xc, yc, e, Q, Rc, cyc in zip(df_day.xc, df_day.yc, df_day.Eddy, df_day.Q, df_day.Rc, df_day.Cyc):
+
+        # ----- Where I plot the eddy's maximum tangenital velocity contour -----
+        dx_ell, dy_ell = X_grid - xc, Y_grid - yc
+        rho2_ell = Q[0,0]*dx_ell**2 + 2*Q[1,0]*dx_ell*dy_ell + Q[1,1]*dy_ell**2 # rho^2
+        ax.contour(X_grid, Y_grid, rho2_ell, levels=[Rc**2/2], colors='r' if cyc=='AE' else 'c')
+        # -----------------------------------------------------------------------
+
+        ax.annotate(
+            str(e), (xc, yc),
+            textcoords='offset points', xytext=(3, 3),
+            fontsize=12, color='w', weight='bold',
+            path_effects=[pe.withStroke(linewidth=2, foreground='k')],
+            zorder=11
+        )
+
+    c1 = ax.contour(X_grid, Y_grid, lat_rho, levels=[-40, -35, -30, -25], colors='k', linewidths=.5)
+    ax.clabel(c1, fmt=lambda v: f"{np.abs(v):.0f}°S", inline=True, colors='k')
+    c2 = ax.contour(X_grid, Y_grid, lon_rho, levels=[150, 155, 160], colors='k', linewidths=.5)
+    ax.clabel(c2, fmt=lambda v: f"{v:.0f}°E", inline=True, colors='k')
+                
+    ax.set_title(f'Day {day} | {pd.Timestamp("1990-01-01") + pd.Timedelta(days=day)}')
+    ax.set_aspect('equal', adjustable='datalim')
+    ax.set_xlabel('x (km)')
+    ax.set_ylabel('y (km)')
+    ax.set_xlim(x_grid.min(), x_grid.max())
+    ax.set_ylim(y_grid.min(), y_grid.max())
+    
+
+
+# Tracking
+
+def collect_tracking_R(
+    df_data,
+    L_SCALE=50,
+    W_SCALE=1e-5,
+    LOOKBACK=4,
+    K_NEIGH=5
+):
+    df = df_data.copy()
+    unique_days = np.sort(df['Day'].unique())
+
+    daily_groups = {
+        d: (
+            df.loc[(df['Day'] == d) & df['xc'].notna()]
+              .groupby('eddy_idx', as_index=False, sort=False)
+              .first()
+        )
+        for d in unique_days
+    }
+
+    rows = []
+
+    for day in unique_days[1:]:
+
+        pres = daily_groups.get(day)
+        if pres is None or len(pres) == 0:
+            continue
+
+        for _, pres_eddy in pres.iterrows():
+
+            for delta in range(1, LOOKBACK + 1):
+
+                prev_day = day - delta
+                prev = daily_groups.get(prev_day)
+
+                if prev is None or len(prev) == 0:
+                    continue
+
+                prev = prev[prev['Cyc'].eq(pres_eddy['Cyc'])]
+
+                if len(prev) == 0:
+                    continue
+
+                coords = np.column_stack([
+                    prev['xc'].values / L_SCALE,
+                    prev['yc'].values / L_SCALE,
+                    prev['w'].values / W_SCALE
+                ])
+
+                tree = cKDTree(coords)
+
+                query = np.array([
+                    pres_eddy['xc'] / L_SCALE,
+                    pres_eddy['yc'] / L_SCALE,
+                    pres_eddy['w'] / W_SCALE
+                ])
+
+                dist, idx = tree.query(query, k=min(K_NEIGH, len(prev)))
+
+                dist = np.atleast_1d(dist)
+                idx = np.atleast_1d(idx)
+
+                for dR, j in zip(dist, idx):
+
+                    prev_eddy = prev.iloc[j]
+
+                    rows.append({
+                        'Day': day,
+                        'prev_day': prev_day,
+                        'delta': delta,
+                        'eddy_idx': pres_eddy['eddy_idx'],
+                        'prev_eddy_idx': prev_eddy['eddy_idx'],
+                        'R': dR,
+                        'dx': pres_eddy['xc'] - prev_eddy['xc'],
+                        'dy': pres_eddy['yc'] - prev_eddy['yc'],
+                        'dw': pres_eddy['w'] - prev_eddy['w'],
+                        'Cyc': pres_eddy['Cyc'],
+                    })
+
+                # only diagnose most recent available day
+                break
+
+    return pd.DataFrame(rows)
+
+
+# def tracking_kdtree(
+#     df_data,
+#     start_ID,
+#     next_num,
+#     L_SCALE=50,      # km
+#     W_SCALE=1e-5,    # s^-1
+#     R_THRESH=1,      # dimensionless radius
+#     LOOKBACK=4
+# ):
+#     tic = time.perf_counter()
+#     df = df_data.dropna(subset=['xc', 'yc', 'w']).copy()
+
+#     min_day = df['Day'].min()
+#     df['Eddy'] = -1
+#     df.loc[df['Day'] == min_day, 'Eddy'] = start_ID
+#     df['Eddy'] = df['Eddy'].astype('Int64')
+
+#     unique_days = np.sort(df['Day'].unique())
+
+#     daily_groups = {
+#         d: (
+#             df.loc[(df['Day'] == d) & df['xc'].notna()]
+#               .groupby('eddy_idx', as_index=False, sort=False)
+#               .first()
+#         )
+#         for d in unique_days
+#     }
+
+#     for day in unique_days[1:]:
+
+#         pres = daily_groups.get(day)
+#         if pres is None or len(pres) == 0:
+#             continue
+
+#         assigned = set()
+
+#         for _, pres_eddy in pres.iterrows():
+
+#             best_id = None
+#             best_R = np.inf
+
+#             query = np.array([
+#                 pres_eddy['xc'] / L_SCALE,
+#                 pres_eddy['yc'] / L_SCALE,
+#                 pres_eddy['w'] / W_SCALE
+#             ])
+
+#             for delta in range(1, LOOKBACK + 1):
+
+#                 prev_day = day - delta
+#                 prev = daily_groups.get(prev_day)
+
+#                 if prev is None or len(prev) == 0:
+#                     continue
+
+#                 prev = prev[prev['Eddy'].notna()]
+
+#                 if len(prev) == 0:
+#                     continue
+
+#                 coords = np.column_stack([
+#                     prev['xc'].values / L_SCALE,
+#                     prev['yc'].values / L_SCALE,
+#                     prev['w'].values / W_SCALE
+#                 ])
+
+#                 tree = cKDTree(coords)
+
+#                 idxs = tree.query_ball_point(query, r=R_THRESH)
+
+#                 if len(idxs) == 0:
+#                     continue
+
+#                 dists = np.linalg.norm(coords[idxs] - query, axis=1)
+#                 order = np.argsort(dists)
+
+#                 for ii in order:
+
+#                     j = idxs[ii]
+#                     dR = dists[ii]
+#                     prev_eddy = prev.iloc[j]
+
+#                     if (
+#                         pres_eddy['Cyc'] == prev_eddy['Cyc']
+#                         and prev_eddy['Eddy'] not in assigned
+#                     ):
+#                         best_id = prev_eddy['Eddy']
+#                         best_R = dR
+#                         break
+
+#                 # prefer most recent valid match
+#                 if best_id is not None:
+#                     break
+
+#             mask = (
+#                 (df['Day'] == day)
+#                 & (df['eddy_idx'] == pres_eddy['eddy_idx'])
+#             )
+
+#             if best_id is not None:
+#                 df.loc[mask, 'Eddy'] = best_id
+#                 assigned.add(best_id)
+#             else:
+#                 df.loc[mask, 'Eddy'] = next_num
+#                 assigned.add(next_num)
+#                 next_num += 1
+
+#         if day % 200 == 0:
+#             print(f"Day {day}, elapsed: {time.perf_counter() - tic:.2f}s")
+
+#     df = df.loc[df['Eddy'].ne(-1)].copy() # eddys that were not assigned are removed
+    
+#     assert not df.duplicated(subset=['Eddy', 'Day']).any(), \
+#         "Duplicate (Eddy, Day) pairs found!"
+
+#     df['next_num'] = next_num
+
+#     return df
+
+def tracking_kdtree(
+    df_data,
+    start_ID,
+    next_num,
+    L_SCALE=50,
+    W_SCALE=1e-5,
+    R_THRESH=1,
+    LOOKBACK=4
+):
+    tic = time.perf_counter()
+    df = df_data.dropna(subset=['xc', 'yc', 'w']).copy()
+
+    min_day = df['Day'].min()
+    df['Eddy'] = -1
+    df.loc[df['Day'] == min_day, 'Eddy'] = start_ID
+    df['Eddy'] = df['Eddy'].astype('Int64')
+
+    unique_days = np.sort(df['Day'].unique())
+
+    for day in unique_days[1:]:
+
+        pres = (
+            df.loc[df['Day'].eq(day)]
+              .groupby('eddy_idx', as_index=False, sort=False)
+              .first()
+        )
+
+        assigned = set()
+
+        for _, pres_eddy in pres.iterrows():
+
+            best_id = None
+
+            query = np.array([
+                pres_eddy['xc'] / L_SCALE,
+                pres_eddy['yc'] / L_SCALE,
+                pres_eddy['w'] / W_SCALE
+            ])
+
+            for delta in range(1, LOOKBACK + 1):
+
+                prev_day = day - delta
+
+                prev = (
+                    df.loc[df['Day'].eq(prev_day) & df['Eddy'].ne(-1)]
+                      .groupby('eddy_idx', as_index=False, sort=False)
+                      .first()
+                )
+
+                if len(prev) == 0:
+                    continue
+
+                coords = np.column_stack([
+                    prev['xc'].values / L_SCALE,
+                    prev['yc'].values / L_SCALE,
+                    prev['w'].values / W_SCALE
+                ])
+
+                tree = cKDTree(coords)
+                idxs = tree.query_ball_point(query, r=R_THRESH)
+
+                if len(idxs) == 0:
+                    continue
+
+                dists = np.linalg.norm(coords[idxs] - query, axis=1)
+
+                for j in np.array(idxs)[np.argsort(dists)]:
+                    prev_eddy = prev.iloc[j]
+
+                    if (
+                        pres_eddy['Cyc'] == prev_eddy['Cyc']
+                        and prev_eddy['Eddy'] not in assigned
+                    ):
+                        best_id = prev_eddy['Eddy']
+                        break
+
+                if best_id is not None:
+                    break
+
+            mask = (
+                df['Day'].eq(day)
+                & df['eddy_idx'].eq(pres_eddy['eddy_idx'])
+            )
+
+            if best_id is not None:
+                df.loc[mask, 'Eddy'] = best_id
+                assigned.add(best_id)
+            else:
+                df.loc[mask, 'Eddy'] = next_num
+                assigned.add(next_num)
+                next_num += 1
+
+        if day % 200 == 0:
+            print(f"Day {day}, elapsed: {time.perf_counter() - tic:.2f}s")
+
+    df = df.loc[df['Eddy'].ne(-1)].copy()
+    df['next_num'] = next_num
+
+    assert not df.duplicated(subset=['Eddy', 'Day']).any(), \
+        "Duplicate (Eddy, Day) pairs found!"
+
+    return df
