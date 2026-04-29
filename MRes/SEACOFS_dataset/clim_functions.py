@@ -252,3 +252,20 @@ def find_directional_radii(u, v, x, y, xc, yc, Q, return_index=False):
                 i0, j0 = nic, njc - r
             dists[direction] = float(np.hypot(x[i0, j0] - xc, y[i0, j0] - yc))
     return dists
+
+
+def compute_AR_from_Q(Q):
+    q11 = Q[:, 0, 0]
+    q12 = Q[:, 1, 0]
+    q22 = Q[:, 1, 1]
+
+    tr  = q11 + q22
+    rad = np.sqrt((q11 - q22)**2 + 4*q12**2)
+
+    lam_min = 0.5 * (tr - rad)
+    lam_max = 0.5 * (tr + rad)
+
+    AR = np.sqrt(lam_max / np.maximum(lam_min, 1e-12))
+    AR[lam_min <= 0] = np.nan
+
+    return AR
