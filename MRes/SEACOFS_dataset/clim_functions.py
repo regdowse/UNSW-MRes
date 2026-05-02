@@ -320,7 +320,7 @@ def day_plot(day, df_eddies, out_core_flag=False):
 
     fig, ax = plt.subplots(figsize=(8, 10))
     im = ax.pcolor(X_grid, Y_grid, cs, shading='nearest', vmin=0, vmax=2.5, cmap='Blues_r')
-    fig.colorbar(im, ax=ax, label=r'Current speed [ms$^{-1}$]')
+    fig.colorbar(im, ax=ax, label=r'Current speed (ms$^{-1}$)')
 
     clrs = np.where(df_day.Cyc.eq('CE'), 'c', 'r')
     ax.scatter(df_day.xc, df_day.yc, c=clrs, edgecolors='k', linewidths=0.8, s=60, zorder=10)
