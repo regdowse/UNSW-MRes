@@ -688,7 +688,7 @@ def tracking_kdtree(
 
 
 def compute_tilt_data(
-    dic,
+    dic_all,
     eddy,
     num=6,
     depth_int=10,
@@ -703,6 +703,8 @@ def compute_tilt_data(
     diffs_yc = {}
 
     target_depths = np.arange(0, max_depth + depth_int, depth_int)
+
+    dic = dic_all[f'Eddy{eddy}']
 
     # --- compute vertical increments for each day ---
     for d, day in enumerate(dic.keys()):
@@ -869,3 +871,11 @@ def compute_tilt_data(
     df_tilt_data['Day'] = df_tilt_data['Day'].astype(int)
 
     return df_tilt_data
+
+def bearing(a, b):
+    dx = b[0] - a[0]
+    dy = b[1] - a[1]
+    angle_rad = np.arctan2(dx, dy)  # note the order: dx, dy
+    angle_deg = np.degrees(angle_rad)
+    bearing = (angle_deg + 360) % 360
+    return bearing
