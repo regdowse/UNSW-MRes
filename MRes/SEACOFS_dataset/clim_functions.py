@@ -6,6 +6,9 @@ import netCDF4 as nc
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 
+# import sys
+# sys.path.append('/home/z5297792/UNSW-MRes/MRes/SEACOFS_dataset') 
+
 fname = f'/srv/scratch/z3533156/26year_BRAN2020/outer_avg_01461.nc'
 dataset = nc.Dataset(fname)
 lon_rho = np.transpose(dataset.variables['lon_rho'], axes=(1, 0))
@@ -555,137 +558,207 @@ def tracking_kdtree(
 
 # Tilt measurement
 
-
-# def compute_tilt_data(dic, eddy, num=6, depth_int=10, max_depth=1000, var='Depth'):
-    
+# def compute_tilt_data( # before impleemnting the 200 m rule
+#     dic_all,
+#     eddy,
+#     num=6,
+#     depth_int=10,
+#     max_depth=1000,
+#     var='Depth',
+#     eps=1e-10,
+#     min_points=5
+# ):
 #     df_tilt_data = pd.DataFrame(columns=['Eddy', 'Day', 'TiltDis', 'TiltDir'])
-    
-#     diffs_x = {}
-#     diffs_y = {}
-        
-#     for d, day in enumerate(dic.keys()):
-    
+
+#     diffs_xc = {}
+#     diffs_yc = {}
+
+#     target_depths = np.arange(0, max_depth + depth_int, depth_int)
+#     full_idx = target_depths[:-1]
+
+#     dic = dic_all[f'Eddy{eddy}']
+#     days = list(dic.keys())
+
+#     # --- compute vertical increments for each day ---
+#     for d, day in enumerate(days):
+
+#         key = f't_{d}'
 #         df = dic[day].copy()
+
 #         if var == 'Depth':
-#             df[var] = -df[var]
+#             df[var] = np.abs(df[var])
+
 #         df = df[df[var] <= max_depth]
-#         # don’t drop rows — keep all depths, even if x or y are NaN
 #         df = df.set_index(var).sort_index()
 
-#         if len(df):
-#             depths = df.index.values
-#             # interpolate at every 10 m from 0 to max_depth
-#             target_depths = np.arange(0, max_depth+1, depth_int)
-#             valid = target_depths[
-#                 (target_depths >= depths.min()) &
-#                 (target_depths <= depths.max())
-#             ]
-#             if len(valid) < 2:
-#                 continue
-        
-#             x_i = np.interp(valid, depths, df['x'].values, left=np.nan, right=np.nan)
-#             y_i = np.interp(valid, depths, df['y'].values, left=np.nan, right=np.nan)
-        
-#             dx = np.diff(x_i)
-#             dy = np.diff(y_i)
-        
-#             # use the actual depth levels (valid[:-1]) as the Series index
-#             idx = valid[:-1]
-#             diffs_x[f'$t_{{{d}}}$'] = pd.Series(dx, index=idx)
-#             diffs_y[f'$t_{{{d}}}$'] = pd.Series(dy, index=idx)
+#         # Preserve failed/empty days as NaN columns
+#         if len(df) < 2:
+#             diffs_xc[key] = pd.Series(np.nan, index=full_idx)
+#             diffs_yc[key] = pd.Series(np.nan, index=full_idx)
+#             continue
 
-#         else:
-#             idx = [depth_int]
-#             diffs_x[f'$t_{{{d}}}$'] = pd.Series(np.array([np.nan]*len(idx)), index=idx)
-#             diffs_y[f'$t_{{{d}}}$'] = pd.Series(np.array([np.nan]*len(idx)), index=idx)
-            
-    
-#     # now construct your DataFrames simply by passing the dict-of-series:
-#     df_X_all = pd.DataFrame(diffs_x)
-#     df_Y_all = pd.DataFrame(diffs_y)
-    
-#     for ref_day in range(num //2, len(dic) - num //2):
-    
+#         depths = df.index.values
+
+#         valid_depths = target_depths[
+#             (target_depths >= depths.min())
+#             & (target_depths <= depths.max())
+#         ]
+
+#         if len(valid_depths) < 2:
+#             diffs_xc[key] = pd.Series(np.nan, index=full_idx)
+#             diffs_yc[key] = pd.Series(np.nan, index=full_idx)
+#             continue
+
+#         xc_col = 'xc' if 'xc' in df.columns else 'x'
+#         yc_col = 'yc' if 'yc' in df.columns else 'y'
+
+#         xc_i = np.interp(
+#             valid_depths,
+#             depths,
+#             df[xc_col].values,
+#             left=np.nan,
+#             right=np.nan
+#         )
+
+#         yc_i = np.interp(
+#             valid_depths,
+#             depths,
+#             df[yc_col].values,
+#             left=np.nan,
+#             right=np.nan
+#         )
+
+#         dxc = np.diff(xc_i)
+#         dyc = np.diff(yc_i)
+
+#         idx = valid_depths[:-1]
+
+#         diffs_xc[key] = pd.Series(dxc, index=idx)
+#         diffs_yc[key] = pd.Series(dyc, index=idx)
+
+#     df_X_all = pd.DataFrame(diffs_xc)
+#     df_Y_all = pd.DataFrame(diffs_yc)
+
+#     # --- rolling temporal window ---
+#     for ref_day in range(num // 2, len(days) - num // 2):
+
 #         df_X = df_X_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
 #         df_Y = df_Y_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
 
-#         if var == 'rho': # rhos are not lined up nicely like depths.
+#         if var == 'rho':
 #             df_X = df_X.dropna()
 #             df_Y = df_Y.dropna()
-        
-#         # Calculation of variability at each depth
-#         df_data = pd.DataFrame()
-#         df_data[r'$\Delta x$'] = df_X.mean(axis=1)
-#         df_data[r'$\Delta y$'] = df_Y.mean(axis=1)
-#         df_data[r'$\sum{\Delta x}$'] = df_data[r'$\Delta x$'].cumsum()
-#         df_data[r'$\sum{\Delta y}$'] = df_data[r'$\Delta y$'].cumsum()
-#         df_data[r'$\sigma^2_{\Delta x}$'] = df_X.var(axis=1)
-#         df_data[r'$\sigma^2_{\Delta y}$'] = df_Y.var(axis=1)
-#         df_data[r'Total $\sigma^2$'] = df_data[r'$\sigma^2_{\Delta x}$'] + df_data[r'$\sigma^2_{\Delta y}$']
-#         df_data['weight'] = 1 / df_data[r'Total $\sigma^2$']
-#         df_data[var] = df_data.index 
-#         df_data
-        
-#         # Line of Best Fit
-        
-#         # your data arrays of shape (N,)
-#         x = df_data[r'$\sum{\Delta x}$'].values
-#         y = df_data[r'$\sum{\Delta y}$'].values
-#         z = df_data[var].values
-#         w = df_data['weight'].values
-        
-#         # 1. compute weighted mean
-#         W = np.sum(w)
-#         mean = np.array([np.dot(w, x),
-#                          np.dot(w, y),
-#                          np.dot(w, z)]) / W
-        
-#         # 2. center and weight the data
-#         X = np.vstack((x, y, z)).T
-#         Xc = X - mean
-#         Xw = Xc * np.sqrt(w)[:, None]
-        
-#         # 3. SVD on weighted, centered data
-#         try:
-#             flag = 0
-#             _, _, Vt = np.linalg.svd(Xw, full_matrices=False)
-#         except Exception:
-#             flag = 1
-            
-#         if flag:
-            
-#             df_tilt_data.loc[len(df_tilt_data)] = {'Eddy': eddy, 'Day': list(dic.keys())[ref_day][3:], 'TiltDis': np.nan, 'TiltDir': np.nan}
-            
-#         else:
-            
-#             direction = Vt[0]   # principal axis
-            
-#             # The best-fit line is:  p(t) = mean + t * direction
-#             t = np.linspace((np.max(z)-mean[2])/direction[2], (np.min(z)-mean[2])/direction[2], 2)    
-#             p = mean[None, :] + t[:, None] * direction  
-#             # or equivalently
-#             p = mean + np.outer(t, direction)          
-            
-#             # then split back out if you need x,y,z separately:
-#             x_line, y_line, z_line = p.T
-            
-#             tilt_dist = np.hypot(x_line[0]-x_line[1], y_line[0]-y_line[1])
-            
-#             top_idx = np.where(np.abs(z_line)==np.min(np.abs(z_line)))[0][0]
-#             if top_idx == 1:
-#                 btm_idx = 0
-#             else:
-#                 btm_idx = 1
-#             top = [x_line[top_idx], y_line[top_idx], z_line[top_idx]]
-#             btm = [x_line[btm_idx], y_line[btm_idx], z_line[btm_idx]]
-#             tilt_direc = ( bearing(btm, top) + 20 ) % 360
-        
-#             df_tilt_data.loc[len(df_tilt_data)] = {'Eddy': eddy, 'Day': list(dic.keys())[ref_day][3:], 'TiltDis': tilt_dist, 'TiltDir': tilt_direc}
-        
-#     df_tilt_data['Day'] = df_tilt_data['Day'].astype(int)
-        
-#     return df_tilt_data
 
+#         df_data = pd.DataFrame(index=df_X.index)
+
+#         df_data['dxc'] = df_X.mean(axis=1)
+#         df_data['dyc'] = df_Y.mean(axis=1)
+
+#         df_data['sum_dxc'] = df_data['dxc'].cumsum()
+#         df_data['sum_dyc'] = df_data['dyc'].cumsum()
+
+#         df_data['var_dxc'] = df_X.var(axis=1)
+#         df_data['var_dyc'] = df_Y.var(axis=1)
+#         df_data['total_var'] = df_data['var_dxc'] + df_data['var_dyc']
+
+#         df_data['weight'] = 1 / (df_data['total_var'] + eps)
+#         df_data[var] = df_data.index
+
+#         df_data = df_data.replace([np.inf, -np.inf], np.nan)
+#         df_data = df_data.dropna(subset=['sum_dxc', 'sum_dyc', var, 'weight'])
+
+#         if len(df_data) < min_points:
+#             df_tilt_data.loc[len(df_tilt_data)] = {
+#                 'Eddy': eddy,
+#                 'Day': int(days[ref_day][3:]),
+#                 'TiltDis': np.nan,
+#                 'TiltDir': np.nan
+#             }
+#             continue
+
+#         xc = df_data['sum_dxc'].values
+#         yc = df_data['sum_dyc'].values
+#         z = df_data[var].values
+#         weights = df_data['weight'].values
+
+#         if not np.all(np.isfinite(weights)):
+#             df_tilt_data.loc[len(df_tilt_data)] = {
+#                 'Eddy': eddy,
+#                 'Day': int(days[ref_day][3:]),
+#                 'TiltDis': np.nan,
+#                 'TiltDir': np.nan
+#             }
+#             continue
+
+#         weights = weights / np.nanmax(weights)
+#         W = np.sum(weights)
+
+#         if not np.isfinite(W) or W <= 0:
+#             df_tilt_data.loc[len(df_tilt_data)] = {
+#                 'Eddy': eddy,
+#                 'Day': int(days[ref_day][3:]),
+#                 'TiltDis': np.nan,
+#                 'TiltDir': np.nan
+#             }
+#             continue
+
+#         mean = np.array([
+#             np.dot(weights, xc),
+#             np.dot(weights, yc),
+#             np.dot(weights, z)
+#         ]) / W
+
+#         X = np.vstack((xc, yc, z)).T
+#         Xc = X - mean
+#         Xw = Xc * np.sqrt(weights)[:, None]
+
+#         try:
+#             _, _, Vt = np.linalg.svd(Xw, full_matrices=False)
+#             direction = Vt[0]
+#         except Exception:
+#             df_tilt_data.loc[len(df_tilt_data)] = {
+#                 'Eddy': eddy,
+#                 'Day': int(days[ref_day][3:]),
+#                 'TiltDis': np.nan,
+#                 'TiltDir': np.nan
+#             }
+#             continue
+
+#         if not np.all(np.isfinite(direction)) or np.abs(direction[2]) < eps:
+#             df_tilt_data.loc[len(df_tilt_data)] = {
+#                 'Eddy': eddy,
+#                 'Day': int(days[ref_day][3:]),
+#                 'TiltDis': np.nan,
+#                 'TiltDir': np.nan
+#             }
+#             continue
+
+#         z_top = np.nanmin(z)
+#         z_btm = np.nanmax(z)
+
+#         t_top = (z_top - mean[2]) / direction[2]
+#         t_btm = (z_btm - mean[2]) / direction[2]
+
+#         p_top = mean + t_top * direction
+#         p_btm = mean + t_btm * direction
+
+#         tilt_dist = np.hypot(
+#             p_top[0] - p_btm[0],
+#             p_top[1] - p_btm[1]
+#         )
+
+#         tilt_dir = (bearing(p_btm, p_top) + 20) % 360
+
+#         df_tilt_data.loc[len(df_tilt_data)] = {
+#             'Eddy': eddy,
+#             'Day': int(days[ref_day][3:]),
+#             'TiltDis': tilt_dist,
+#             'TiltDir': tilt_dir
+#         }
+
+#     df_tilt_data['Day'] = df_tilt_data['Day'].astype(int)
+
+#     return df_tilt_data
 
 def compute_tilt_data(
     dic_all,
@@ -693,6 +766,7 @@ def compute_tilt_data(
     num=6,
     depth_int=10,
     max_depth=1000,
+    min_depth_range=200,
     var='Depth',
     eps=1e-10,
     min_points=5
@@ -703,12 +777,14 @@ def compute_tilt_data(
     diffs_yc = {}
 
     target_depths = np.arange(0, max_depth + depth_int, depth_int)
+    full_idx = target_depths[:-1]
 
     dic = dic_all[f'Eddy{eddy}']
+    days = list(dic.keys())
 
-    # --- compute vertical increments for each day ---
-    for d, day in enumerate(dic.keys()):
+    for d, day in enumerate(days):
 
+        key = f't_{d}'
         df = dic[day].copy()
 
         if var == 'Depth':
@@ -718,6 +794,8 @@ def compute_tilt_data(
         df = df.set_index(var).sort_index()
 
         if len(df) < 2:
+            diffs_xc[key] = pd.Series(np.nan, index=full_idx)
+            diffs_yc[key] = pd.Series(np.nan, index=full_idx)
             continue
 
         depths = df.index.values
@@ -728,42 +806,23 @@ def compute_tilt_data(
         ]
 
         if len(valid_depths) < 2:
+            diffs_xc[key] = pd.Series(np.nan, index=full_idx)
+            diffs_yc[key] = pd.Series(np.nan, index=full_idx)
             continue
 
-        xc_i = np.interp(
-            valid_depths,
-            depths,
-            df['xc'].values if 'xc' in df.columns else df['x'].values,
-            left=np.nan,
-            right=np.nan
-        )
+        xc_col = 'xc' if 'xc' in df.columns else 'x'
+        yc_col = 'yc' if 'yc' in df.columns else 'y'
 
-        yc_i = np.interp(
-            valid_depths,
-            depths,
-            df['yc'].values if 'yc' in df.columns else df['y'].values,
-            left=np.nan,
-            right=np.nan
-        )
+        xc_i = np.interp(valid_depths, depths, df[xc_col].values, left=np.nan, right=np.nan)
+        yc_i = np.interp(valid_depths, depths, df[yc_col].values, left=np.nan, right=np.nan)
 
-        dxc = np.diff(xc_i)
-        dyc = np.diff(yc_i)
-
-        idx = valid_depths[:-1]
-
-        diffs_xc[f't_{d}'] = pd.Series(dxc, index=idx)
-        diffs_yc[f't_{d}'] = pd.Series(dyc, index=idx)
-
-    if len(diffs_xc) == 0:
-        return df_tilt_data
+        diffs_xc[key] = pd.Series(np.diff(xc_i), index=valid_depths[:-1])
+        diffs_yc[key] = pd.Series(np.diff(yc_i), index=valid_depths[:-1])
 
     df_X_all = pd.DataFrame(diffs_xc)
     df_Y_all = pd.DataFrame(diffs_yc)
 
-    days = list(dic.keys())
-
-    # --- rolling temporal window ---
-    for ref_day in range(num // 2, len(df_X_all.columns) - num // 2):
+    for ref_day in range(num // 2, len(days) - num // 2):
 
         df_X = df_X_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
         df_Y = df_Y_all.iloc[:, ref_day - num // 2:ref_day + num // 2 + 1]
@@ -787,7 +846,22 @@ def compute_tilt_data(
         df_data['weight'] = 1 / (df_data['total_var'] + eps)
         df_data[var] = df_data.index
 
-        df_data = df_data.replace([np.inf, -np.inf], np.nan).dropna()
+        df_data = df_data.replace([np.inf, -np.inf], np.nan)
+        df_data = df_data.dropna(subset=['sum_dxc', 'sum_dyc', var, 'weight'])
+
+        if len(df_data):
+            depth_range = df_data[var].max() - df_data[var].min()
+        else:
+            depth_range = 0
+
+        if depth_range < min_depth_range:
+            df_tilt_data.loc[len(df_tilt_data)] = {
+                'Eddy': eddy,
+                'Day': int(days[ref_day][3:]),
+                'TiltDis': np.nan,
+                'TiltDir': np.nan
+            }
+            continue
 
         if len(df_data) < min_points:
             df_tilt_data.loc[len(df_tilt_data)] = {
@@ -803,6 +877,16 @@ def compute_tilt_data(
         z = df_data[var].values
         weights = df_data['weight'].values
 
+        if not np.all(np.isfinite(weights)):
+            df_tilt_data.loc[len(df_tilt_data)] = {
+                'Eddy': eddy,
+                'Day': int(days[ref_day][3:]),
+                'TiltDis': np.nan,
+                'TiltDir': np.nan
+            }
+            continue
+
+        weights = weights / np.nanmax(weights)
         W = np.sum(weights)
 
         if not np.isfinite(W) or W <= 0:
@@ -879,3 +963,89 @@ def bearing(a, b):
     angle_deg = np.degrees(angle_rad)
     bearing = (angle_deg + 360) % 360
     return bearing
+
+def phys_grad(F, X, Y, mask=None):
+    # index-space gradients
+    x_i, x_j = np.gradient(X)
+    y_i, y_j = np.gradient(Y)
+    F_i, F_j = np.gradient(F)
+    # Jacobian
+    J = x_i*y_j - x_j*y_i
+    # physical gradients
+    dFdx = ( F_i*y_j - F_j*y_i) / J
+    dFdy = (-F_i*x_j + F_j*x_i) / J
+    # handle singular cells
+    bad = np.isclose(J, 0)
+    dFdx[bad] = np.nan
+    dFdy[bad] = np.nan
+    # apply mask (1=ocean, 0=land)
+    if mask is not None:
+        m = mask.astype(bool)
+        dFdx = np.where(m, dFdx, np.nan)
+        dFdy = np.where(m, dFdy, np.nan)
+    return dFdx, dFdy
+
+def compute_core_mean(
+    df_eddies,
+    X_grid,
+    Y_grid,
+    mask_rho,
+    base_path=None,
+    varname=None,
+    fixed_field=None,
+    colname=None,
+):
+    """
+    Core-mean of either
+      - a 3D field (x,y,t) loaded as <varname>_<fnumber>.npy, or
+      - a fixed 2D field (x,y) passed in as fixed_field.
+    """
+    if fixed_field is None and (base_path is None or varname is None):
+        raise ValueError("Either fixed_field OR (base_path and varname) must be provided.")
+    mode_2d = fixed_field is not None
+    if colname is None:
+        if mode_2d:
+            colname = "field_core"
+        else:
+            colname = f"{varname}"
+    df = df_eddies[~df_eddies["TiltDis"].isna()].copy()
+    chunks = []
+    if mode_2d:
+        field2d = np.where(mask_rho, fixed_field, np.nan)
+    for fname, df_loc in df.groupby("fname"):
+        if not mode_2d:
+            fnumber  = int(fname[-8:-3])
+            base_day = fnumber + 1
+            data3d = np.load(f"{base_path}/{varname}_{fnumber:05}.npy")
+            data3d = np.where(mask_rho[:, :, None], data3d, np.nan)
+        df_loc = df_loc.copy().reset_index(drop=False)
+        core_vals = np.full(len(df_loc), np.nan)
+        for idx, row in enumerate(df_loc.itertuples(index=False)):
+            dx = X_grid - row.xc
+            dy = Y_grid - row.yc
+            rho2 = (
+                row.q11 * dx**2
+                + 2 * row.q12 * dx * dy
+                + row.q22 * dy**2
+            )
+            core_mask = rho2 <= row.Rc**2 / 2
+            if not core_mask.any():
+                continue
+            if mode_2d:
+                vals = field2d[core_mask]
+            else:
+                t_idx = int(row.Day - base_day)
+                vals = data3d[:, :, t_idx][core_mask]
+            core_vals[idx] = np.nanmean(vals)
+        chunks.append(pd.DataFrame({
+            "Eddy": df_loc["Eddy"].to_numpy(),
+            "Day":  df_loc["Day"].to_numpy(),
+            colname: core_vals
+        }))
+    df_core = pd.concat(chunks, ignore_index=True)
+    df_out = df_eddies.merge(
+        df_core[["Eddy", "Day", colname]],
+        how="left",
+        on=["Eddy", "Day"]
+    )
+    return df_out
