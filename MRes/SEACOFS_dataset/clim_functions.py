@@ -342,7 +342,8 @@ def day_plot(day, df_eddies, out_core_flag=False):
         dx_ell, dy_ell = X_grid - xc, Y_grid - yc
         rho2_ell = Q[0,0]*dx_ell**2 + 2*Q[1,0]*dx_ell*dy_ell + Q[1,1]*dy_ell**2 # rho^2
         ax.contour(X_grid, Y_grid, rho2_ell, levels=[Rc**2/2], colors='r' if cyc=='AE' else 'c')
-        ax.contour(X_grid, Y_grid, rho2_ell, levels=[(1.75*R)**2], linestyles='--', colors='r' if cyc=='AE' else 'c')
+        if out_core_flag:
+            ax.contour(X_grid, Y_grid, rho2_ell, levels=[(1.75*R)**2], linestyles='--', colors='r' if cyc=='AE' else 'c')
         # -----------------------------------------------------------------------
 
         ax.annotate(
@@ -762,6 +763,217 @@ def bearing(a, b):
     bearing = (angle_deg + 360) % 360
     return bearing
 
+# plotting func 
+def plot_tilt_method(
+    dic_all, eddy, ref_day_idx,
+    ax_x=None, ax_y=None,
+    num=6, depth_int=10, max_depth=1000,
+    min_depth_range=200, var='Depth',
+    eps=1e-10, min_points=5,
+    color='tab:blue',
+    show=True
+):
+    dic = dic_all[f'Eddy{eddy}']
+    days = list(dic.keys())
+
+    target_depths = np.arange(0, max_depth + depth_int, depth_int)
+    full_idx = target_depths[:-1]
+
+    diffs_xc, diffs_yc = {}, {}
+    interp_xc, interp_yc = {}, {}
+
+    for d, day in enumerate(days):
+
+        df = dic[day].copy()
+
+        if var == 'Depth':
+            df[var] = np.abs(df[var])
+
+        df = df[df[var] <= max_depth].set_index(var).sort_index()
+        key = f't_{d}'
+
+        if len(df) < 2:
+            diffs_xc[key] = pd.Series(np.nan, index=full_idx)
+            diffs_yc[key] = pd.Series(np.nan, index=full_idx)
+            continue
+
+        xc_col = 'xc' if 'xc' in df.columns else 'x'
+        yc_col = 'yc' if 'yc' in df.columns else 'y'
+
+        depths = df.index.values
+
+        valid_depths = target_depths[
+            (target_depths >= depths.min()) &
+            (target_depths <= depths.max())
+        ]
+
+        if len(valid_depths) < 2:
+            diffs_xc[key] = pd.Series(np.nan, index=full_idx)
+            diffs_yc[key] = pd.Series(np.nan, index=full_idx)
+            continue
+
+        xc_i = np.interp(valid_depths, depths, df[xc_col].values)
+        yc_i = np.interp(valid_depths, depths, df[yc_col].values)
+
+        interp_xc[key] = pd.Series(xc_i - xc_i[0], index=valid_depths)
+        interp_yc[key] = pd.Series(yc_i - yc_i[0], index=valid_depths)
+
+        diffs_xc[key] = pd.Series(np.diff(xc_i), index=valid_depths[:-1])
+        diffs_yc[key] = pd.Series(np.diff(yc_i), index=valid_depths[:-1])
+
+    df_X_all = pd.DataFrame(diffs_xc)
+    df_Y_all = pd.DataFrame(diffs_yc)
+
+    i0 = ref_day_idx - num // 2
+    i1 = ref_day_idx + num // 2 + 1
+
+    df_X = df_X_all.iloc[:, i0:i1]
+    df_Y = df_Y_all.iloc[:, i0:i1]
+
+    if var == 'rho':
+        df_X = df_X.dropna()
+        df_Y = df_Y.dropna()
+
+    df_data = pd.DataFrame(index=df_X.index)
+    df_data['dxc'] = df_X.mean(axis=1)
+    df_data['dyc'] = df_Y.mean(axis=1)
+    df_data['sum_dxc'] = df_data['dxc'].cumsum()
+    df_data['sum_dyc'] = df_data['dyc'].cumsum()
+    df_data['var_dxc'] = df_X.var(axis=1)
+    df_data['var_dyc'] = df_Y.var(axis=1)
+    df_data['total_var'] = df_data['var_dxc'] + df_data['var_dyc']
+    df_data['weight'] = 1 / (df_data['total_var'] + eps)
+    df_data[var] = df_data.index
+
+    df_data = (
+        df_data
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=['sum_dxc', 'sum_dyc', var, 'weight'])
+    )
+
+    if len(df_data) < min_points:
+        print(f'Eddy {eddy}: tilt not measurable, too few valid points.')
+        return None, None, df_data
+
+    if df_data[var].max() - df_data[var].min() < min_depth_range:
+        print(f'Eddy {eddy}: tilt not measurable, depth range < {min_depth_range} m.')
+        return None, None, df_data
+
+    x = df_data['sum_dxc'].values
+    y = df_data['sum_dyc'].values
+    z = df_data[var].values
+    w = df_data['weight'].values
+
+    if not np.all(np.isfinite(w)):
+        print(f'Eddy {eddy}: tilt not measurable, invalid weights.')
+        return None, None, df_data
+
+    w = w / np.nanmax(w)
+    W = np.sum(w)
+
+    if not np.isfinite(W) or W <= 0:
+        print(f'Eddy {eddy}: tilt not measurable, invalid total weight.')
+        return None, None, df_data
+
+    mean = np.array([
+        np.dot(w, x),
+        np.dot(w, y),
+        np.dot(w, z)
+    ]) / W
+
+    X = np.vstack((x, y, z)).T
+    Xc = X - mean
+    Xw = Xc * np.sqrt(w)[:, None]
+
+    try:
+        _, _, Vt = np.linalg.svd(Xw, full_matrices=False)
+        direction = Vt[0]
+    except Exception:
+        print(f'Eddy {eddy}: tilt not measurable, SVD failed.')
+        return None, None, df_data
+
+    if not np.all(np.isfinite(direction)) or np.abs(direction[2]) < eps:
+        print(f'Eddy {eddy}: tilt not measurable, invalid SVD direction.')
+        return None, None, df_data
+
+    z_top, z_btm = np.nanmin(z), np.nanmax(z)
+
+    t_top = (z_top - mean[2]) / direction[2]
+    t_btm = (z_btm - mean[2]) / direction[2]
+
+    p_top = mean + t_top * direction
+    p_btm = mean + t_btm * direction
+
+    tilt_dist = np.hypot(p_top[0] - p_btm[0], p_top[1] - p_btm[1])
+    tilt_dir = (bearing(p_btm, p_top) + 20) % 360
+
+    if ax_x is None or ax_y is None:
+        fig, axs = plt.subplots(1, 2, figsize=(7, 5), sharey=True)
+        ax_x, ax_y = axs
+    else:
+        fig = ax_x.figure
+
+    df_xi = pd.DataFrame(interp_xc).iloc[:, i0:i1]
+    df_yi = pd.DataFrame(interp_yc).iloc[:, i0:i1]
+
+    for col in df_xi.columns:
+        ax_x.plot(df_xi[col], df_xi.index, color=color, alpha=0.25, lw=0.8)
+        ax_y.plot(df_yi[col], df_yi.index, color=color, alpha=0.25, lw=0.8)
+
+    # ax_x.scatter(x, z, s=20 + 80*w, color=color, alpha=0.8)
+    # ax_y.scatter(y, z, s=20 + 80*w, color=color, alpha=0.8)
+    spread_x = df_data['var_dxc'].values
+    spread_y = df_data['var_dyc'].values
+    
+    ax_x.fill_betweenx(
+        z,
+        x - spread_x,
+        x + spread_x,
+        color=color,
+        alpha=0.25
+    )
+    
+    ax_y.fill_betweenx(
+        z,
+        y - spread_y,
+        y + spread_y,
+        color=color,
+        alpha=0.25
+    )
+
+    ax_x.plot(x, z, color=color, lw=2, label='mean cumulative displacement')
+    ax_y.plot(y, z, color=color, lw=2)
+
+    ax_x.plot(
+        [p_top[0], p_btm[0]],
+        [p_top[2], p_btm[2]],
+        'k--', lw=2,
+        label='weighted SVD tilt'
+    )
+
+    ax_y.plot(
+        [p_top[1], p_btm[1]],
+        [p_top[2], p_btm[2]],
+        'k--', lw=2
+    )
+
+    ax_x.invert_yaxis()
+    ax_x.set_xlabel('x displacement')
+    ax_y.set_xlabel('y displacement')
+    ax_x.set_ylabel('Depth')
+    ax_x.set_title('x-depth projection')
+    ax_y.set_title('y-depth projection')
+
+    day_actual = int(days[ref_day_idx][3:])
+
+    ax_x.legend(frameon=False)
+
+    if show:
+        plt.tight_layout()
+        plt.show()
+
+    return fig, (ax_x, ax_y), df_data
+
 def phys_grad(F, X, Y, mask=None):
     # index-space gradients
     x_i, x_j = np.gradient(X)
@@ -847,3 +1059,97 @@ def compute_core_mean(
         on=["Eddy", "Day"]
     )
     return df_out
+
+def plot_binned_median_map(
+    df_eddies,
+    metric='Rc',
+    X_grid=X_grid,
+    Y_grid=Y_grid,
+    h=h,
+    mask_rho=mask_rho,
+    lat_rho=lat_rho,
+    lon_rho=lon_rho,
+    vmin=0,
+    vmax=120,
+    scale=1.0,
+    rule='fd',
+    levels_lat=[-40, -35, -30, -25],
+    levels_lon=[150, 155, 160],
+    cmaps={'AE': 'Reds', 'CE': 'Blues'},
+    units='km',
+    figsize=(9, 8)
+):
+
+    xbins = _bin_edges_fd(df_eddies.xc.values, X_grid, scale=scale, rule=rule)
+    ybins = _bin_edges_fd(df_eddies.yc.values, Y_grid, scale=scale, rule=rule)
+
+    norm = Normalize(vmin=vmin, vmax=vmax)
+
+    fig, axs = plt.subplots(1, 2, figsize=figsize, sharey=True)
+
+    for ax, cyc in zip(axs, ['AE', 'CE']):
+
+        df = (
+            df_eddies[df_eddies.Cyc.eq(cyc)]
+            .dropna(subset=['xc', 'yc', metric])
+            .sort_values(metric, kind='mergesort', ignore_index=True)
+        )
+
+        ax.contour(X_grid, Y_grid, h, levels=[4000], colors='k')
+
+        H = binned_median(
+            df.xc.values,
+            df.yc.values,
+            df[metric].values,
+            xbins,
+            ybins
+        )
+
+        m = ax.pcolormesh(
+            xbins, ybins, H,
+            cmap=cmaps[cyc],
+            norm=norm,
+            shading='auto',
+            rasterized=True
+        )
+
+        cb = fig.colorbar(m, ax=ax, location='top', shrink=0.9, pad=0.02)
+        cb.set_label(fr'{cyc} median surface ${metric}$ ({units})', fontsize=12)
+        cb.set_ticks(np.linspace(vmin, vmax, 5))
+
+        ax.contourf(
+            X_grid, Y_grid, np.where(mask_rho == 0, 1, np.nan),
+            levels=[0.5, 1.5], colors=['k'], alpha=0.5
+        )
+
+        c1 = ax.contour(X_grid, Y_grid, lat_rho, levels=levels_lat, colors='k', linewidths=0.5)
+        ax.clabel(c1, fmt=lambda v: f"{-v:.0f}°S", inline=True, colors='k')
+
+        c2 = ax.contour(X_grid, Y_grid, lon_rho, levels=levels_lon, colors='k', linewidths=0.5)
+        ax.clabel(c2, fmt=lambda v: f"{v:.0f}°E", inline=True, colors='k')
+
+        ax.axis('equal')
+        ax.set_xlim(15, X_grid.max())
+        ax.set_ylim(Y_grid.min(), Y_grid.max())
+        ax.set_xlabel('x (km)', fontsize=11)
+
+    axs[0].set_ylabel('y (km)', fontsize=11)
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig, axs
+
+def tilt_distance_Li(x, y, z, zmin=None, zmax=None):
+    x, y, z = np.asarray(x), np.asarray(y), np.asarray(z)
+    m = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    if zmin is not None: m &= (z >= zmin)
+    if zmax is not None: m &= (z <= zmax)
+    x, y = x[m], y[m]
+    if x.size == 0: return np.nan, np.nan, (np.nan, np.nan)
+
+    TDx = np.nanmax(x) - np.nanmin(x)
+    TDy = np.nanmax(y) - np.nanmin(y)
+    TD  = np.hypot(TDx, TDy)
+    theta_deg = np.degrees(np.arctan2(TDy, TDx))
+    return TD, theta_deg, (TDx, TDy)
