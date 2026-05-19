@@ -5,6 +5,7 @@ import time
 import netCDF4 as nc
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
+from matplotlib.colors import Normalize
 
 # import sys
 # sys.path.append('/home/z5297792/UNSW-MRes/MRes/SEACOFS_dataset') 
@@ -1060,6 +1061,62 @@ def compute_core_mean(
     )
     return df_out
 
+def _nice_step(h, base):
+    s = h / base
+    for k in [1, 2, 2.5, 5, 10]:
+        if s <= k: return k * base
+    return np.ceil(s) * base
+
+def _grid_step(G):
+    gx = np.diff(np.sort(np.unique(G.ravel())))
+    return np.nanmedian(gx[gx > 0])
+
+def bin_edges_fd(x, xgrid, rule='fd'): # Freedman-Diaconis (fg) rationale
+    n = len(x)
+    if n < 2: return np.array([np.min(x), np.max(x)])
+    rng = np.ptp(x)
+    iqr = np.subtract(*np.percentile(x, [75, 25]))
+    std = np.std(x, ddof=1)
+
+    # raw width (km)
+    if rule.lower() == 'fd':
+        h = 2 * (iqr if iqr > 0 else 1.349*std) / (n ** (1/3))
+    else:  # 'scott'
+        h = 3.5 * std / (n ** (1/3))
+
+    # fallback if degenerate
+    if not np.isfinite(h) or h <= 0:
+        h = rng / max(10, np.sqrt(n))
+
+    # snap to grid spacing
+    base = _grid_step(xgrid)
+    h = _nice_step(h, base)
+
+    lo = np.floor(np.min(x) / h) * h
+    hi = np.ceil(np.max(x) / h) * h
+    return np.arange(lo, hi + h, h)
+
+def binned_median(x, y, v, xbins, ybins):
+    ix = np.digitize(x, xbins) - 1
+    iy = np.digitize(y, ybins) - 1
+
+    nx, ny = len(xbins) - 1, len(ybins) - 1
+    ok = (
+        (ix >= 0) & (ix < nx) &
+        (iy >= 0) & (iy < ny) &
+        np.isfinite(v)
+    )
+
+    bins = {}
+    for i, j, val in zip(ix[ok], iy[ok], v[ok]):
+        bins.setdefault((j, i), []).append(val)
+
+    out = np.full((ny, nx), np.nan)
+    for (j, i), vals in bins.items():
+        out[j, i] = np.nanmedian(vals)
+
+    return out
+
 def plot_binned_median_map(
     df_eddies,
     metric='Rc',
@@ -1071,7 +1128,6 @@ def plot_binned_median_map(
     lon_rho=lon_rho,
     vmin=0,
     vmax=120,
-    scale=1.0,
     rule='fd',
     levels_lat=[-40, -35, -30, -25],
     levels_lon=[150, 155, 160],
@@ -1080,8 +1136,8 @@ def plot_binned_median_map(
     figsize=(9, 8)
 ):
 
-    xbins = _bin_edges_fd(df_eddies.xc.values, X_grid, scale=scale, rule=rule)
-    ybins = _bin_edges_fd(df_eddies.yc.values, Y_grid, scale=scale, rule=rule)
+    xbins = bin_edges_fd(df_eddies.xc.values, X_grid, rule=rule)
+    ybins = bin_edges_fd(df_eddies.yc.values, Y_grid, rule=rule)
 
     norm = Normalize(vmin=vmin, vmax=vmax)
 
