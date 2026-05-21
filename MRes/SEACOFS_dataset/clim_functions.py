@@ -921,8 +921,6 @@ def plot_tilt_method(
         ax_x.plot(df_xi[col], df_xi.index, color=color, alpha=0.25, lw=0.8)
         ax_y.plot(df_yi[col], df_yi.index, color=color, alpha=0.25, lw=0.8)
 
-    # ax_x.scatter(x, z, s=20 + 80*w, color=color, alpha=0.8)
-    # ax_y.scatter(y, z, s=20 + 80*w, color=color, alpha=0.8)
     spread_x = df_data['var_dxc'].values
     spread_y = df_data['var_dyc'].values
     
