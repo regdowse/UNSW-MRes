@@ -587,16 +587,16 @@ def compute_tilt_data(
         key = f't_{d}'
         df = dic[day].copy()
 
+        if len(df) < 2:
+            diffs_xc[key] = pd.Series(np.nan, index=full_idx)
+            diffs_yc[key] = pd.Series(np.nan, index=full_idx)
+            continue
+
         if var == 'Depth':
             df[var] = np.abs(df[var])
 
         df = df[df[var] <= max_depth]
         df = df.set_index(var).sort_index()
-
-        if len(df) < 2:
-            diffs_xc[key] = pd.Series(np.nan, index=full_idx)
-            diffs_yc[key] = pd.Series(np.nan, index=full_idx)
-            continue
 
         depths = df.index.values
 
@@ -787,16 +787,17 @@ def plot_tilt_method(
 
         df = dic[day].copy()
 
-        if var == 'Depth':
-            df[var] = np.abs(df[var])
-
-        df = df[df[var] <= max_depth].set_index(var).sort_index()
         key = f't_{d}'
 
         if len(df) < 2:
             diffs_xc[key] = pd.Series(np.nan, index=full_idx)
             diffs_yc[key] = pd.Series(np.nan, index=full_idx)
             continue
+
+        if var == 'Depth':
+            df[var] = np.abs(df[var])
+
+        df = df[df[var] <= max_depth].set_index(var).sort_index()
 
         xc_col = 'xc' if 'xc' in df.columns else 'x'
         yc_col = 'yc' if 'yc' in df.columns else 'y'
@@ -1134,8 +1135,8 @@ def plot_binned_median_map(
     figsize=(9, 8)
 ):
 
-    xbins = bin_edges_fd(df_eddies.xc.values, X_grid, rule=rule)
-    ybins = bin_edges_fd(df_eddies.yc.values, Y_grid, rule=rule)
+    xbins = bin_edges_fd(pd.to_numeric(df_eddies.xc, errors='coerce').to_numpy(dtype=float), X_grid, rule=rule)
+    ybins = bin_edges_fd(pd.to_numeric(df_eddies.yc, errors='coerce').to_numpy(dtype=float), Y_grid, rule=rule)
 
     norm = Normalize(vmin=vmin, vmax=vmax)
 
@@ -1152,9 +1153,9 @@ def plot_binned_median_map(
         ax.contour(X_grid, Y_grid, h, levels=[4000], colors='k')
 
         H = binned_median(
-            df.xc.values,
-            df.yc.values,
-            df[metric].values,
+            df.xc.to_numpy(dtype=float),
+            df.yc.to_numpy(dtype=float),
+            df[metric].to_numpy(dtype=float),
             xbins,
             ybins
         )
