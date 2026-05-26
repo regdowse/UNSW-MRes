@@ -1004,6 +1004,7 @@ def compute_core_mean(
     varname=None,
     fixed_field=None,
     colname=None,
+    circle_region_flag=False
 ):
     """
     Core-mean of either
@@ -1033,12 +1034,16 @@ def compute_core_mean(
         for idx, row in enumerate(df_loc.itertuples(index=False)):
             dx = X_grid - row.xc
             dy = Y_grid - row.yc
-            rho2 = (
-                row.q11 * dx**2
-                + 2 * row.q12 * dx * dy
-                + row.q22 * dy**2
-            )
-            core_mask = rho2 <= row.Rc**2 / 2
+            if circle_region_flag:
+                rho2 = (dx**2 + dy**2)
+                core_mask = rho2 <= row.rmax**2
+            else:
+                rho2 = (
+                    row.q11 * dx**2
+                    + 2 * row.q12 * dx * dy
+                    + row.q22 * dy**2
+                )
+                core_mask = rho2 <= row.Rc**2 / 2
             if not core_mask.any():
                 continue
             if mode_2d:
