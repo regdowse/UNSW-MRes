@@ -1089,14 +1089,26 @@ def compute_core_mean(
             dx = X_grid - row.xc
             dy = Y_grid - row.yc
             if circle_region_flag:
-                rho2 = (dx**2 + dy**2)
-                core_mask = rho2 <= row.rmax**2
+                if hasattr(row, 'rmax') and np.isfinite(row.rmax):
+                    rho2 = (dx**2 + dy**2)
+                    core_mask = rho2 <= row.rmax**2
+                else:
+                    rho2 = np.full_like(dx, np.nan, dtype=float)
             else:
-                rho2 = (
-                    row.q11 * dx**2
-                    + 2 * row.q12 * dx * dy
-                    + row.q22 * dy**2
-                )
+                if hasattr(row, 'q11') and np.isfinite(row.q11):
+                    rho2 = (
+                        row.q11 * dx**2
+                        + 2 * row.q12 * dx * dy
+                        + row.q22 * dy**2
+                    )
+                elif isinstance(row.Q, np.ndarray) and row.Q.shape == (2, 2) and np.isfinite(row.Q).all():
+                    rho2 = (
+                        row.Q[0, 0] * dx**2
+                        + 2 * row.Q[1, 0] * dx * dy
+                        + row.Q[1, 1] * dy**2
+                    )
+                else:
+                    rho2 = np.full_like(dx, np.nan, dtype=float)
                 core_mask = rho2 <= row.Rc**2 / 2
             if not core_mask.any():
                 continue
