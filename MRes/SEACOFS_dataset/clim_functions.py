@@ -10,6 +10,10 @@ from matplotlib.colors import Normalize
 # import sys
 # sys.path.append('/home/z5297792/UNSW-MRes/MRes/SEACOFS_dataset') 
 
+import sys
+sys.path.append("/home/z5297792/ESP_zonodo")
+from functions import doppio, out_core_param_fit
+
 fname = f'/srv/scratch/z3533156/26year_BRAN2020/outer_avg_01461.nc'
 dataset = nc.Dataset(fname)
 lon_rho = np.transpose(dataset.variables['lon_rho'], axes=(1, 0))
@@ -366,6 +370,224 @@ def day_plot(day, df_eddies, out_core_flag=False):
     ax.set_ylabel('y (km)')
     ax.set_xlim(x_grid.min(), x_grid.max())
     ax.set_ylim(y_grid.min(), y_grid.max())
+
+
+# 50m depth check parallisation
+
+def rotate_uv(u, v, angle):
+    u = np.where(np.abs(u) > 1e30, np.nan, u).astype(float)
+    v = np.where(np.abs(v) > 1e30, np.nan, v).astype(float)
+    u_rot = v * np.sin(angle) + u * np.cos(angle)
+    v_rot = v * np.cos(angle) - u * np.sin(angle)
+
+    return u_rot, v_rot
+
+def transect_indexer(ic, jc, X, Y, r=30.0):
+    x = np.asarray(X[:, 0])
+    y = np.asarray(Y[0, :])
+
+    x0, y0 = x[ic], y[jc]
+
+    i0 = np.searchsorted(x, x0 - r, side='left')
+    i1 = np.searchsorted(x, x0 + r, side='right')
+    j0 = np.searchsorted(y, y0 - r, side='left')
+    j1 = np.searchsorted(y, y0 + r, side='right')
+
+    ii = np.arange(i0, i1)
+    jj = np.arange(j0, j1)
+
+    return x[ii], np.full(ii.size, y0), np.full(jj.size, x0), y[jj], ii, jj
+
+def nearest_ij(xc, yc, X, Y):
+    x = np.asarray(X[:, 0])
+    y = np.asarray(Y[0, :])
+
+    ic = np.abs(x - xc).argmin()
+    jc = np.abs(y - yc).argmin()
+
+    return int(ic), int(jc)
+
+def interp_3d_to_reference_depths(var3d, z3d, target_depths):
+    target_depths = np.asarray(target_depths)
+    nz = target_depths.size
+
+    out = np.full(var3d.shape[:2] + (nz,), np.nan)
+
+    for i in range(var3d.shape[0]):
+        for j in range(var3d.shape[1]):
+            out[i, j, :] = np.interp(
+                target_depths,
+                z3d[i, j, :],
+                var3d[i, j, :],
+                left=np.nan,
+                right=np.nan
+            )
+
+    return out 
+
+def local_eddy_arrays(X, Y, u2d, v2d, xc, yc, Q, rho_max):
+    local = (
+        (X >= xc - rho_max)
+        & (X <= xc + rho_max)
+        & (Y >= yc - rho_max)
+        & (Y <= yc + rho_max)
+    )
+
+    Xloc = X[local]
+    Yloc = Y[local]
+    uloc = u2d[local]
+    vloc = v2d[local]
+
+    dx = Xloc - xc
+    dy = Yloc - yc
+
+    rho2 = (
+        Q[0, 0] * dx**2
+        + 2 * Q[0, 1] * dx * dy
+        + Q[1, 1] * dy**2
+    )
+
+    rho = np.sqrt(np.where(rho2 >= 0, rho2, np.nan))
+
+    return Xloc, Yloc, uloc, vloc, rho
+
+def add_reaches_50m_flag_fname(
+    df,
+    fname,
+    X_grid, Y_grid, angle, z_r, target_depths,
+    r=30.0, max_jump=100,
+    depth_thresh=50.0,
+    flag_col='reaches_50m'
+):
+
+    z_r = np.abs(z_r)
+
+    if flag_col not in df.columns:
+        df[flag_col] = np.nan
+
+    if 'ic' not in df.columns or 'jc' not in df.columns:
+        ij = np.array([
+            nearest_ij(xc, yc, X_grid, Y_grid)
+            for xc, yc in zip(df.xc, df.yc)
+        ])
+        df['ic'], df['jc'] = ij[:, 0], ij[:, 1]
+
+    df_file = df.loc[df.fname.eq(fname)]
+
+    if df_file.empty:
+        return df
+
+    with nc.Dataset(fname) as ds:
+
+        ocean_time = ds['ocean_time'][:] / 86400
+        time_lookup = {int(d): i for i, d in enumerate(ocean_time)}
+
+        for day, df_day in df_file.groupby('Day', sort=False):
+
+            t = time_lookup.get(int(day))
+
+            if t is None:
+                continue
+
+            u3d = np.flip(
+                ds['u_eastward'][t].T.astype(float),
+                axis=2
+            )
+
+            v3d = np.flip(
+                ds['v_northward'][t].T.astype(float),
+                axis=2
+            )
+
+            u3d[np.abs(u3d) > 1e30] = np.nan
+            v3d[np.abs(v3d) > 1e30] = np.nan
+
+            u_depth = interp_3d_to_reference_depths(
+                u3d, z_r, target_depths
+            )
+
+            v_depth = interp_3d_to_reference_depths(
+                v3d, z_r, target_depths
+            )
+
+            for row in df_day.itertuples():
+
+                xc_prev, yc_prev = row.xc, row.yc
+                ic, jc = int(row.ic), int(row.jc)
+                w_surf = row.w
+
+                reached = False
+
+                for k, target_depth in enumerate(target_depths):
+
+                    if (
+                        (xc_prev < r)
+                        or (xc_prev > X_grid.max() - r)
+                        or (yc_prev < r)
+                        or (yc_prev > Y_grid.max() - r)
+                    ):
+                        # print(1)
+                        break
+
+                    u2d = u_depth[:, :, k]
+                    v2d = v_depth[:, :, k]
+
+                    x1, y1, x2, y2, ii, jj = transect_indexer(
+                        ic, jc, X_grid, Y_grid, r=r
+                    )
+
+                    u1, v1 = rotate_uv(
+                        u2d[ii, jc],
+                        v2d[ii, jc],
+                        angle
+                    )
+
+                    u2, v2 = rotate_uv(
+                        u2d[ic, jj],
+                        v2d[ic, jj],
+                        angle
+                    )
+
+                    if any(
+                        np.all(np.isnan(a))
+                        for a in [u1, v1, u2, v2]
+                    ):
+                        # print(2)
+                        break
+
+                    try:
+                        xc, yc, w, Q, Omega0 = doppio(
+                            x1, y1, u1, v1,
+                            x2, y2, u2, v2
+                        )
+                    except Exception:
+                        # print(3)
+                        break
+
+                    if (
+                        np.sign(w) != np.sign(w_surf)
+                        or np.hypot(
+                            xc - xc_prev,
+                            yc - yc_prev
+                        ) > max_jump
+                    ):
+                        # print(4)
+                        break
+
+                    if target_depth >= depth_thresh:
+                        reached = True
+                        break
+
+                    xc_prev = xc
+                    yc_prev = yc
+
+                df.loc[row.Index, flag_col] = reached
+
+    return df
+
+# vert dataset
+
+
 
 
 # Tracking
