@@ -586,7 +586,206 @@ def add_reaches_50m_flag_fname(
     return df
 
 # vert dataset
+def vert_doppio_dataset(
+    dic, df_eddies, fname, X_grid, Y_grid, angle, z_r, 
+    r=30.0,
+    max_jump=100,
+    max_depth_levels=None,
+    rho_max=200,
+    rho_min=30,
+    target_depths=None
+):
+    z_r = np.abs(z_r)
 
+    df_file = df_eddies.loc[df_eddies.fname.eq(fname)]
+
+    if df_file.empty:
+        return dic
+
+    with nc.Dataset(fname) as ds:
+
+        ocean_time = ds['ocean_time'][:] / 86400
+        time_lookup = {int(d): i for i, d in enumerate(ocean_time)}
+
+        for day, df_day in df_file.groupby('Day', sort=False):
+
+            t = time_lookup.get(int(day))
+            if t is None:
+                continue
+
+            u3d = ds['u_eastward'][t, :, :, :].T.astype(float)
+            u3d = np.flip(u3d, axis=2)
+            v3d = ds['v_northward'][t, :, :, :].T.astype(float)
+            v3d = np.flip(v3d, axis=2)
+
+            u3d[np.abs(u3d) > 1e30] = np.nan
+            v3d[np.abs(v3d) > 1e30] = np.nan
+
+            # nz = u3d.shape[-1]
+            nz = len(target_depths)
+            if max_depth_levels is not None:
+                nz = min(nz, max_depth_levels)
+
+            u_depth = interp_3d_to_reference_depths(
+                u3d, z_r, target_depths
+            )
+            
+            v_depth = interp_3d_to_reference_depths(
+                v3d, z_r, target_depths
+            )
+
+            for row in df_day.itertuples():
+
+                eddy_key = f'Eddy{row.Eddy}'
+                day_key = f'Day{int(row.Day)}'
+
+                dic.setdefault(eddy_key, {})
+
+                out = []
+
+                out.append({
+                    'z': 0,
+                    'Depth': 0,
+                    'xc': row.xc,
+                    'yc': row.yc,
+                    'ic': row.ic,
+                    'jc': row.jc,
+                    'w': row.w,
+                    'Q': np.array([[row.q11, row.q12], [row.q12, row.q22]]),
+                    'Omega0': np.nan,
+                    'Omega': row.Omega,
+                    'Rc': row.Rc,
+                    'psi0': row.psi0,
+                    'R': row.R
+                })
+
+                xc_prev = row.xc
+                yc_prev = row.yc
+                w_surf = row.w
+
+                ic = int(row.ic)
+                jc = int(row.jc)
+                # print(eddy_key)
+                for k in range(nz):
+                    # print(f'k = {k}')
+            
+                    if (
+                        (xc_prev < r)
+                        or (xc_prev > X_grid.max() - r)
+                        or (yc_prev < r)
+                        or (yc_prev > Y_grid.max() - r)
+                    ):
+                        # print(1)
+                        break
+
+                    target_depth = target_depths[k]
+
+                    u2d = u_depth[:, :, k]
+                    v2d = v_depth[:, :, k]
+
+                    x1, y1, x2, y2, ii, jj = transect_indexer(
+                        ic, jc, X_grid, Y_grid, r=r
+                    )
+
+                    u1 = u2d[ii, jc]
+                    v1 = v2d[ii, jc]
+                    u2 = u2d[ic, jj]
+                    v2 = v2d[ic, jj]
+
+                    u1, v1 = rotate_uv(u1, v1, angle)
+                    u2, v2 = rotate_uv(u2, v2, angle)
+
+                    if any(np.all(np.isnan(a)) for a in [u1, v1, u2, v2]):
+                        # print(2)
+                        break
+
+                    try:
+                        xc, yc, w, Q, Omega0 = doppio(
+                            x1, y1, u1, v1,
+                            x2, y2, u2, v2
+                        )
+                    except Exception:
+                        print(3)
+                        break
+
+                    if (
+                        np.sign(w) != np.sign(w_surf)
+                        or np.hypot(xc - xc_prev, yc - yc_prev) > max_jump
+                    ):
+                        # print(4)
+                        break
+
+                    ic, jc = nearest_ij(xc, yc, X_grid, Y_grid)
+
+                    u2d_rot, v2d_rot = rotate_uv(u2d, v2d, angle)
+
+                    Xloc, Yloc, uloc, vloc, rho = local_eddy_arrays(
+                        X_grid, Y_grid,
+                        u2d_rot, v2d_rot,
+                        xc, yc, Q,
+                        rho_max=rho_max
+                    )
+
+                    mask0 = rho < rho_max
+
+                    if mask0.sum() < 10:
+                        break
+
+                    radii = find_directional_radii(
+                        u2d_rot, v2d_rot, X_grid, Y_grid, xc, yc, Q
+                    )
+
+                    R = np.nanmean([
+                        radii['up'],
+                        radii['right'],
+                        radii['down'],
+                        radii['left'],
+                    ])
+
+                    if not np.isfinite(R):
+                        # print(5)
+                        break
+
+                    rho_lim = max(min(R * 1.75, rho_max), rho_min)
+                    mask = rho < rho_lim
+
+                    if mask.sum() < 10:
+                        break
+
+                    try:
+                        Rc, psi0, Omega = out_core_param_fit(
+                            Xloc[mask],
+                            Yloc[mask],
+                            uloc[mask],
+                            vloc[mask],
+                            xc, yc, Q,
+                            Omega0=Omega0
+                        )
+                    except Exception:
+                        break
+
+                    out.append({
+                        'z': k+1,
+                        'Depth': target_depth,
+                        'xc': xc,
+                        'yc': yc,
+                        'ic': ic,
+                        'jc': jc,
+                        'w': w*1e-3,
+                        'Q': Q,
+                        'Omega0': Omega0*1e-3,
+                        'Omega': Omega*1e-3,
+                        'Rc': Rc,
+                        'psi0': psi0,
+                        'R': R
+                    })
+
+                    xc_prev = xc
+                    yc_prev = yc
+
+                dic[eddy_key][day_key] = pd.DataFrame(out)
+
+    return dic
 
 
 
