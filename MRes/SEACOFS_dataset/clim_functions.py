@@ -6,6 +6,7 @@ import netCDF4 as nc
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 from matplotlib.colors import Normalize
+from matplotlib.ticker import FormatStrFormatter
 
 # import sys
 # sys.path.append('/home/z5297792/UNSW-MRes/MRes/SEACOFS_dataset') 
@@ -1700,3 +1701,424 @@ def tilt_distance_Li(x, y, z, zmin=None, zmax=None):
     TD  = np.hypot(TDx, TDy)
     theta_deg = np.degrees(np.arctan2(TDy, TDx))
     return TD, theta_deg, (TDx, TDy)
+
+
+##### Composite eddy ######
+def smooth_esp_params_depth(
+    df,
+    window=5,
+    min_periods=2,
+    centre=True,
+    remove_outliers=True,
+    z_col='Depth'
+):
+    """
+    Smooth ESP parameters with depth for one eddy-day dataframe.
+    Smooths xc, yc, q11, q12, q22, Omega, Rc.
+    """
+
+    df = df.copy().sort_values(z_col)
+
+    # unpack Q into scalar columns
+    df['q11'] = df['Q'].apply(lambda Q: Q[0, 0] if Q is not None else np.nan)
+    df['q12'] = df['Q'].apply(lambda Q: Q[0, 1] if Q is not None else np.nan)
+    df['q22'] = df['Q'].apply(lambda Q: Q[1, 1] if Q is not None else np.nan)
+
+    cols = ['xc', 'yc', 'q11', 'q12', 'q22', 'Omega', 'Rc']
+
+    for col in cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    if remove_outliers:
+        for col in cols:
+            med = df[col].rolling(window, center=centre, min_periods=min_periods).median()
+            mad = (df[col] - med).abs().rolling(window, center=centre, min_periods=min_periods).median()
+
+            outlier = (df[col] - med).abs() > 4 * 1.4826 * mad
+            df.loc[outlier, col] = np.nan
+
+    # interpolate then smooth
+    for col in cols:
+        df[col] = (
+            df[col]
+            .interpolate(limit_direction='both')
+            .rolling(window, center=centre, min_periods=min_periods)
+            .mean()
+        )
+
+    return df
+
+# def composite_eddy_velocity(
+#     eddy,
+#     dic_vert,
+#     z_r,
+#     xlim_km=150,
+#     nx=100,
+#     ny=100,
+#     zmax=1.2e3,
+#     smooth_params=True,
+#     smooth_window=5,
+#     plot=False,
+#     zlim=1000,
+#     levels=20,
+#     cmap='RdBu_r',
+# ):
+
+#     x = np.linspace(-xlim_km, xlim_km, nx) * 1e3
+#     y = np.linspace(-xlim_km, xlim_km, ny) * 1e3
+
+#     z_grid = np.insert(np.abs(z_r[150, 150, 1:]), 0, 0)
+#     z_grid = z_grid[z_grid < zmax]
+
+#     X, Y = np.meshgrid(x, y, indexing='ij')
+#     nx, ny, nz = len(x), len(y), len(z_grid)
+
+#     U_days = []
+#     V_days = []
+
+#     for day, df in dic_vert[f'Eddy{eddy}'].items():
+
+#         df = df.copy().sort_values('Depth')
+
+#         if smooth_params:
+#             df = smooth_esp_params_depth(
+#                 df,
+#                 window=smooth_window,
+#                 z_col='Depth'
+#             )
+#         else:
+#             df['q11'] = df['Q'].apply(lambda Q: Q[0, 0] if Q is not None else np.nan)
+#             df['q12'] = df['Q'].apply(lambda Q: Q[0, 1] if Q is not None else np.nan)
+#             df['q22'] = df['Q'].apply(lambda Q: Q[1, 1] if Q is not None else np.nan)
+
+#         # shift centres relative to surface centre after smoothing
+#         df['xc'] -= df['xc'].iloc[0]
+#         df['yc'] -= df['yc'].iloc[0]
+
+#         U = np.zeros((nx, ny, nz))
+#         V = np.zeros((nx, ny, nz))
+
+#         for _, data in df.iterrows():
+
+#             if not np.all(np.isfinite([
+#                 data.xc, data.yc,
+#                 data.q11, data.q12, data.q22,
+#                 data.Omega, data.Rc
+#             ])):
+#                 continue
+
+#             k = np.argmin(np.abs(z_grid - abs(data.Depth)))
+
+#             dx = X - data.xc * 1e3
+#             dy = Y - data.yc * 1e3
+
+#             rho2 = (
+#                 data.q11*dx**2
+#                 + 2*data.q12*dx*dy
+#                 + data.q22*dy**2
+#             )
+
+#             fac = data.Omega * np.exp(-rho2 / (data.Rc * 1e3)**2)
+
+#             U[:, :, k] = -fac * (data.q12*dx + data.q22*dy)
+#             V[:, :, k] =  fac * (data.q11*dx + data.q12*dy)
+
+#         U_days.append(U)
+#         V_days.append(V)
+
+#     U_comp = np.mean(U_days, axis=0)
+#     V_comp = np.mean(V_days, axis=0)
+
+#     if not plot:
+#         return X, Y, z_grid, U_comp, V_comp
+
+#     # keep your plotting block unchanged below this point
+
+#     ix0 = np.argmin(np.abs(x))
+#     iy0 = np.argmin(np.abs(y))
+
+#     vmax = np.nanmax(np.abs([U_comp, V_comp]))
+
+#     fig, axs = plt.subplots(
+#         1, 2,
+#         figsize=(11, 4),
+#         sharey=True,
+#         constrained_layout=True
+#     )
+
+#     # zonal section: x-z at y = 0, perpendicular velocity = V
+#     m0 = axs[0].contourf(
+#         x / 1e3,
+#         z_grid,
+#         V_comp[:, iy0, :].T,
+#         cmap=cmap,
+#         vmin=-vmax,
+#         vmax=vmax,
+#         levels=levels,
+#         extend='both'
+#     )
+
+#     axs[0].contour(
+#         x / 1e3,
+#         z_grid,
+#         V_comp[:, iy0, :].T,
+#         levels=[0],
+#         colors='k',
+#         linewidths=2
+#     )
+
+#     axs[0].set_title('Zonal: $v$')
+#     axs[0].set_xlabel('x (km)')
+#     axs[0].set_ylabel('Depth (m)')
+#     axs[0].invert_yaxis()
+#     axs[0].axvline(0, color='k', lw=0.8, ls='--', alpha=.8)
+#     axs[0].set_ylim(zlim, 0)
+
+#     # meridional section: y-z at x = 0, perpendicular velocity = U
+#     axs[1].contourf(
+#         y / 1e3,
+#         z_grid,
+#         U_comp[ix0, :, :].T,
+#         cmap=cmap,
+#         vmin=-vmax,
+#         vmax=vmax,
+#         levels=levels,
+#         extend='both'
+#     )
+
+#     axs[1].contour(
+#         y / 1e3,
+#         z_grid,
+#         U_comp[ix0, :, :].T,
+#         levels=[0],
+#         colors='k',
+#         linewidths=2
+#     )
+
+#     axs[1].set_title('Meridional: $u$')
+#     axs[1].set_xlabel('y (km)')
+#     axs[1].axvline(0, color='k', lw=0.8, ls='--', alpha=.8)
+#     axs[1].set_ylim(zlim, 0)
+
+#     cbar = fig.colorbar(m0, ax=axs, location='right', shrink=0.9)
+#     cbar.set_label('(m s$^{-1}$)')
+
+#     cyc = 'AE' if np.sign(data.w)>0 else 'CE'
+#     fig.suptitle(f'{cyc}{eddy}')
+
+#     return X, Y, z_grid, U_comp, V_comp, fig, axs
+
+def composite_eddy_velocity(
+    eddy,
+    dic_vert,
+    z_r,
+    xlim_km=150,
+    nx=100,
+    ny=100,
+    zmax=1.2e3,
+    smooth_params=True,
+    smooth_window=5,
+    plot=False,
+    plot_panel='both',      # 'both', 'zonal', or 'meridional'
+    ax=None,                # pass external axis for single-panel plotting
+    add_cbar=True,
+    zlim=1000,
+    levels=20,
+    cmap='RdBu_r',
+):
+
+    x = np.linspace(-xlim_km, xlim_km, nx) * 1e3
+    y = np.linspace(-xlim_km, xlim_km, ny) * 1e3
+
+    z_grid = np.insert(np.abs(z_r[150, 150, 1:]), 0, 0)
+    z_grid = z_grid[z_grid < zmax]
+
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    nx, ny, nz = len(x), len(y), len(z_grid)
+
+    U_days = []
+    V_days = []
+
+    last_w = np.nan
+
+    for day, df in dic_vert[f'Eddy{eddy}'].items():
+
+        df = df.copy().sort_values('Depth')
+
+        if smooth_params:
+            df = smooth_esp_params_depth(
+                df,
+                window=smooth_window,
+                z_col='Depth'
+            )
+        else:
+            df['q11'] = df['Q'].apply(lambda Q: Q[0, 0] if Q is not None else np.nan)
+            df['q12'] = df['Q'].apply(lambda Q: Q[0, 1] if Q is not None else np.nan)
+            df['q22'] = df['Q'].apply(lambda Q: Q[1, 1] if Q is not None else np.nan)
+
+        if 'w' in df.columns:
+            last_w = df['w'].iloc[0]
+
+        df['xc'] -= df['xc'].iloc[0]
+        df['yc'] -= df['yc'].iloc[0]
+
+        U = np.zeros((nx, ny, nz))
+        V = np.zeros((nx, ny, nz))
+
+        for _, data in df.iterrows():
+
+            if not np.all(np.isfinite([
+                data.xc, data.yc,
+                data.q11, data.q12, data.q22,
+                data.Omega, data.Rc
+            ])):
+                continue
+
+            if data.Rc <= 0:
+                continue
+
+            k = np.argmin(np.abs(z_grid - abs(data.Depth)))
+
+            dx = X - data.xc * 1e3
+            dy = Y - data.yc * 1e3
+
+            rho2 = (
+                data.q11 * dx**2
+                + 2 * data.q12 * dx * dy
+                + data.q22 * dy**2
+            )
+
+            fac = data.Omega * np.exp(-rho2 / (data.Rc * 1e3)**2)
+
+            U[:, :, k] = -fac * (data.q12*dx + data.q22*dy)
+            V[:, :, k] =  fac * (data.q11*dx + data.q12*dy)
+
+        U = np.nan_to_num(U, nan=0.0, posinf=0.0, neginf=0.0)
+        V = np.nan_to_num(V, nan=0.0, posinf=0.0, neginf=0.0)
+
+        U_days.append(U)
+        V_days.append(V)
+
+    U_comp = np.mean(U_days, axis=0)
+    V_comp = np.mean(V_days, axis=0)
+
+    if not plot:
+        return X, Y, z_grid, U_comp, V_comp
+
+    ix0 = np.argmin(np.abs(x))
+    iy0 = np.argmin(np.abs(y))
+
+    vmax = np.nanmax(np.abs([U_comp, V_comp]))
+    clevels = np.linspace(-vmax, vmax, levels + 1)
+
+    cyc = 'AE' if np.sign(last_w) > 0 else 'CE'
+
+    def _plot_zonal(ax):
+        m = ax.contourf(
+            x / 1e3,
+            z_grid,
+            V_comp[:, iy0, :].T,
+            cmap=cmap,
+            levels=clevels,
+            extend='both'
+        )
+
+        ax.contour(
+            x / 1e3,
+            z_grid,
+            V_comp[:, iy0, :].T,
+            levels=[0],
+            colors='k',
+            linewidths=2,
+            alpha=.7
+        )
+
+        ax.set_title('Zonal: $v$')
+        ax.set_xlabel('x (km)')
+        ax.set_ylabel('Depth (m)')
+        ax.axvline(0, color='k', lw=0.8, ls='--', alpha=.8)
+        ax.set_ylim(zlim, 0)
+
+        return m
+
+    def _plot_meridional(ax):
+        m = ax.contourf(
+            y / 1e3,
+            z_grid,
+            U_comp[ix0, :, :].T,
+            cmap=cmap,
+            levels=clevels,
+            extend='both'
+        )
+
+        ax.contour(
+            y / 1e3,
+            z_grid,
+            U_comp[ix0, :, :].T,
+            levels=[0],
+            colors='k',
+            linewidths=2,
+            alpha=.7
+        )
+
+        ax.set_title('Meridional: $u$')
+        ax.set_xlabel('y (km)')
+        ax.set_ylabel('Depth (m)')
+        ax.axvline(0, color='k', lw=0.8, ls='--', alpha=.8)
+        ax.set_ylim(zlim, 0)
+
+        return m
+
+    if plot_panel == 'zonal':
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(4, 4), constrained_layout=True)
+        else:
+            fig = ax.figure
+
+        m = _plot_zonal(ax)
+        ax.set_title(f'{cyc}{eddy}: zonal $v$')
+
+        if add_cbar:
+            cbar = fig.colorbar(m, ax=ax, shrink=0.9)
+            cbar.set_label('v (m s$^{-1}$)')
+            cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+
+        return X, Y, z_grid, U_comp, V_comp, fig, ax
+
+    if plot_panel == 'meridional':
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(4, 4), constrained_layout=True)
+        else:
+            fig = ax.figure
+
+        m = _plot_meridional(ax)
+        ax.set_title(f'{cyc}{eddy}: meridional $u$')
+
+        if add_cbar:
+            cbar = fig.colorbar(m, ax=ax, shrink=0.9)
+            cbar.set_label('u (m s$^{-1}$)')
+            cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+
+        return X, Y, z_grid, U_comp, V_comp, fig, ax
+
+    fig, axs = plt.subplots(
+        1, 2,
+        figsize=(11, 4),
+        sharey=True,
+        constrained_layout=True
+    )
+
+    m0 = _plot_zonal(axs[0])
+    _plot_meridional(axs[1])
+
+    axs[1].set_ylabel('')
+
+    if add_cbar:
+        cbar = fig.colorbar(m0, ax=axs, location='right', shrink=0.9)
+        cbar.set_label('(m s$^{-1}$)')
+
+    fig.suptitle(f'{cyc}{eddy}')
+
+    return X, Y, z_grid, U_comp, V_comp, fig, axs
