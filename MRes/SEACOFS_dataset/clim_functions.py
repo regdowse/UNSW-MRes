@@ -1964,6 +1964,66 @@ def composite_eddy_velocity(
     return X, Y, z_grid, U_comp, V_comp, fig, axs
 
 # Regioning 
+def make_region_grids(
+    X_grid,
+    Y_grid,
+    lon_rho,
+    lat_rho,
+    h,
+    mask_rho,
+    lon_split=157,
+    lat_split=-33,
+    shelf_hmax=4000,
+    shelf_xmax=400,
+    shelf_lonmax=154.85,
+):
+    """
+    Create region_mask_grid and bin_grid for regions:
+    S1, S2, U1, D1, U2, D2.
+    """
+
+    region_mask_grid = (
+        (h < shelf_hmax)
+        & (X_grid < shelf_xmax)
+        & (lon_rho < shelf_lonmax)
+        & (mask_rho == 1)
+    )
+
+    bin_grid = np.full(X_grid.shape, np.nan)
+
+    # Shelf
+    bin_grid[region_mask_grid & (lat_rho >= lat_split)] = 1  # S1
+    bin_grid[region_mask_grid & (lat_rho <  lat_split)] = 2  # S2
+
+    # Offshore west
+    bin_grid[
+        (~region_mask_grid)
+        & (lon_rho < lon_split)
+        & (mask_rho == 1)
+        & (lat_rho >= lat_split)
+    ] = 3  # U1
+
+    bin_grid[
+        (~region_mask_grid)
+        & (lon_rho < lon_split)
+        & (mask_rho == 1)
+        & (lat_rho < lat_split)
+    ] = 4  # D1
+
+    # Offshore east
+    bin_grid[
+        (lon_rho >= lon_split)
+        & (mask_rho == 1)
+        & (lat_rho >= lat_split)
+    ] = 5  # U2
+
+    bin_grid[
+        (lon_rho >= lon_split)
+        & (mask_rho == 1)
+        & (lat_rho < lat_split)
+    ] = 6  # D2
+
+    return region_mask_grid, bin_grid
 
 def plot_region_map(
     ax,
@@ -1973,71 +2033,83 @@ def plot_region_map(
     lat_rho,
     h,
     mask_rho,
-    bin_grid,
-    region_mask_grid,
     levels_lat,
     levels_lon,
     lon_split=157,
     lat_split=-33,
     title=None,
+    borders_only=False
 ):
     """
     Plot the six-region map onto an existing axis.
     """
 
-    ax.contourf(
-        X_grid, Y_grid,
-        np.where(mask_rho == 0, 1, np.nan),
-        levels=[0.5, 1.5],
-        colors=['k'],
-        alpha=0.5
-    )
-
-    ax.contourf(
-        X_grid, Y_grid,
-        bin_grid,
-        levels=np.arange(0.5, 7.5, 1),
-        alpha=0.25,
-        cmap='gist_rainbow'
-    )
-
-    c1 = ax.contour(
-        X_grid, Y_grid,
-        lat_rho,
-        levels=levels_lat,
-        colors='k',
-        linewidths=0.5
-    )
-
-    ax.clabel(
-        c1,
-        fmt=lambda v: f"{np.abs(v):.0f}°S",
-        inline=True,
-        colors='k'
-    )
-
-    c2 = ax.contour(
-        X_grid, Y_grid,
+    region_mask_grid, bin_grid = make_region_grids(
+        X_grid,
+        Y_grid,
         lon_rho,
-        levels=levels_lon,
-        colors='k',
-        linewidths=0.5
-    )
-
-    ax.clabel(
-        c2,
-        fmt=lambda v: f"{v:.0f}°E",
-        inline=True,
-        colors='k'
-    )
-
-    ax.contour(
-        X_grid, Y_grid,
+        lat_rho,
         h,
-        levels=[4000],
-        colors='k',
-        linewidths=1
+        mask_rho,
+        lon_split=lon_split,
+        lat_split=lat_split
     )
+
+    if not borders_only:
+        ax.contourf(
+            X_grid, Y_grid,
+            np.where(mask_rho == 0, 1, np.nan),
+            levels=[0.5, 1.5],
+            colors=['k'],
+            alpha=0.5
+        )
+
+    
+        ax.contourf(
+            X_grid, Y_grid,
+            bin_grid,
+            levels=np.arange(0.5, 7.5, 1),
+            alpha=0.25,
+            cmap='gist_rainbow'
+        )
+
+        c1 = ax.contour(
+            X_grid, Y_grid,
+            lat_rho,
+            levels=levels_lat,
+            colors='k',
+            linewidths=0.5
+        )
+    
+        ax.clabel(
+            c1,
+            fmt=lambda v: f"{np.abs(v):.0f}°S",
+            inline=True,
+            colors='k'
+        )
+    
+        c2 = ax.contour(
+            X_grid, Y_grid,
+            lon_rho,
+            levels=levels_lon,
+            colors='k',
+            linewidths=0.5
+        )
+    
+        ax.clabel(
+            c2,
+            fmt=lambda v: f"{v:.0f}°E",
+            inline=True,
+            colors='k'
+        )
+    
+        ax.contour(
+            X_grid, Y_grid,
+            h,
+            levels=[4000],
+            colors='k',
+            linewidths=1
+        )
 
     ax.contour(
         X_grid, Y_grid,
@@ -2081,7 +2153,8 @@ def plot_region_map(
             ha='center',
             va='center',
             fontsize=11,
-            fontweight='bold'
+            fontweight='bold',
+            color='m' if borders_only else 'k'
         )
 
     ax.set_aspect('equal')
@@ -2112,46 +2185,16 @@ def add_region_column(
     to a dataframe containing xc and yc coordinates.
     """
 
-    region_mask_grid = (
-        (h < 4e3)
-        & (X_grid < 400)
-        & (lon_rho < 154.85)
-        & (mask_rho == 1)
+    region_mask_grid, bin_grid = make_region_grids(
+        X_grid,
+        Y_grid,
+        lon_rho,
+        lat_rho,
+        h,
+        mask_rho,
+        lon_split=lon_split,
+        lat_split=lat_split
     )
-
-    bin_grid = np.full(X_grid.shape, np.nan)
-
-    # Shelf
-    bin_grid[region_mask_grid & (lat_rho >= lat_split)] = 1
-    bin_grid[region_mask_grid & (lat_rho <  lat_split)] = 2
-
-    # Offshore west
-    bin_grid[
-        (~region_mask_grid)
-        & (lon_rho < lon_split)
-        & (mask_rho == 1)
-        & (lat_rho >= lat_split)
-    ] = 3
-
-    bin_grid[
-        (~region_mask_grid)
-        & (lon_rho < lon_split)
-        & (mask_rho == 1)
-        & (lat_rho < lat_split)
-    ] = 4
-
-    # Offshore east
-    bin_grid[
-        (lon_rho >= lon_split)
-        & (mask_rho == 1)
-        & (lat_rho >= lat_split)
-    ] = 5
-
-    bin_grid[
-        (lon_rho >= lon_split)
-        & (mask_rho == 1)
-        & (lat_rho < lat_split)
-    ] = 6
 
     tree = cKDTree(
         np.column_stack([X_grid.ravel(), Y_grid.ravel()])
@@ -2181,3 +2224,221 @@ def add_region_column(
     )
 
     return df
+
+# def plot_region_map(
+#     ax,
+#     X_grid,
+#     Y_grid,
+#     lon_rho,
+#     lat_rho,
+#     h,
+#     mask_rho,
+#     bin_grid,
+#     region_mask_grid,
+#     levels_lat,
+#     levels_lon,
+#     lon_split=157,
+#     lat_split=-33,
+#     title=None,
+#     borders_only=False
+# ):
+#     """
+#     Plot the six-region map onto an existing axis.
+#     """
+
+#     ax.contourf(
+#         X_grid, Y_grid,
+#         np.where(mask_rho == 0, 1, np.nan),
+#         levels=[0.5, 1.5],
+#         colors=['k'],
+#         alpha=0.5
+#     )
+
+#     ax.contourf(
+#         X_grid, Y_grid,
+#         bin_grid,
+#         levels=np.arange(0.5, 7.5, 1),
+#         alpha=0.25,
+#         cmap='gist_rainbow'
+#     )
+
+#     c1 = ax.contour(
+#         X_grid, Y_grid,
+#         lat_rho,
+#         levels=levels_lat,
+#         colors='k',
+#         linewidths=0.5
+#     )
+
+#     ax.clabel(
+#         c1,
+#         fmt=lambda v: f"{np.abs(v):.0f}°S",
+#         inline=True,
+#         colors='k'
+#     )
+
+#     c2 = ax.contour(
+#         X_grid, Y_grid,
+#         lon_rho,
+#         levels=levels_lon,
+#         colors='k',
+#         linewidths=0.5
+#     )
+
+#     ax.clabel(
+#         c2,
+#         fmt=lambda v: f"{v:.0f}°E",
+#         inline=True,
+#         colors='k'
+#     )
+
+#     ax.contour(
+#         X_grid, Y_grid,
+#         h,
+#         levels=[4000],
+#         colors='k',
+#         linewidths=1
+#     )
+
+#     ax.contour(
+#         X_grid, Y_grid,
+#         region_mask_grid.astype(float),
+#         levels=[0.5],
+#         colors='magenta',
+#         linewidths=2,
+#         linestyles='-'
+#     )
+
+#     ax.contour(
+#         X_grid, Y_grid,
+#         lon_rho,
+#         levels=[lon_split],
+#         colors='magenta',
+#         linewidths=2,
+#         linestyles='-'
+#     )
+
+#     ax.contour(
+#         X_grid, Y_grid,
+#         np.where(mask_rho, lat_rho, np.nan),
+#         levels=[lat_split],
+#         colors='magenta',
+#         linewidths=2,
+#         linestyles='-'
+#     )
+
+#     labels = [
+#         ('S1', 220, 1300),
+#         ('S2', 120, 50),
+#         ('U1', 400, 1450),
+#         ('U2', 800, 1450),
+#         ('D1', 400, 700),
+#         ('D2', 800, 700),
+#     ]
+
+#     for txt, x, y in labels:
+#         ax.text(
+#             x, y, txt,
+#             ha='center',
+#             va='center',
+#             fontsize=11,
+#             fontweight='bold'
+#         )
+
+#     ax.set_aspect('equal')
+#     ax.set_xlim(X_grid.min(), X_grid.max())
+#     ax.set_ylim(Y_grid.min(), Y_grid.max())
+
+#     ax.set_xlabel('x (km)')
+#     ax.set_ylabel('y (km)')
+
+#     if title is not None:
+#         ax.set_title(title)
+
+#     return ax
+
+# def add_region_column(
+#     df,
+#     X_grid,
+#     Y_grid,
+#     lon_rho,
+#     lat_rho,
+#     h,
+#     mask_rho,
+#     lon_split=157,
+#     lat_split=-33,
+# ):
+#     """
+#     Add a Region column (S1, S2, U1, D1, U2, D2)
+#     to a dataframe containing xc and yc coordinates.
+#     """
+
+#     region_mask_grid = (
+#         (h < 4e3)
+#         & (X_grid < 400)
+#         & (lon_rho < 154.85)
+#         & (mask_rho == 1)
+#     )
+
+#     bin_grid = np.full(X_grid.shape, np.nan)
+
+#     # Shelf
+#     bin_grid[region_mask_grid & (lat_rho >= lat_split)] = 1
+#     bin_grid[region_mask_grid & (lat_rho <  lat_split)] = 2
+
+#     # Offshore west
+#     bin_grid[
+#         (~region_mask_grid)
+#         & (lon_rho < lon_split)
+#         & (mask_rho == 1)
+#         & (lat_rho >= lat_split)
+#     ] = 3
+
+#     bin_grid[
+#         (~region_mask_grid)
+#         & (lon_rho < lon_split)
+#         & (mask_rho == 1)
+#         & (lat_rho < lat_split)
+#     ] = 4
+
+#     # Offshore east
+#     bin_grid[
+#         (lon_rho >= lon_split)
+#         & (mask_rho == 1)
+#         & (lat_rho >= lat_split)
+#     ] = 5
+
+#     bin_grid[
+#         (lon_rho >= lon_split)
+#         & (mask_rho == 1)
+#         & (lat_rho < lat_split)
+#     ] = 6
+
+#     tree = cKDTree(
+#         np.column_stack([X_grid.ravel(), Y_grid.ravel()])
+#     )
+
+#     _, idx = tree.query(
+#         np.column_stack([df.xc, df.yc])
+#     )
+
+#     region_map = {
+#         1: 'S1',
+#         2: 'S2',
+#         3: 'U1',
+#         4: 'D1',
+#         5: 'U2',
+#         6: 'D2'
+#     }
+
+#     df = df.copy()
+
+#     df['Region'] = (
+#         pd.Series(
+#             bin_grid.ravel()[idx],
+#             index=df.index
+#         )
+#         .map(region_map)
+#     )
+
+#     return df
