@@ -1748,166 +1748,6 @@ def smooth_esp_params_depth(
 
     return df
 
-# def composite_eddy_velocity(
-#     eddy,
-#     dic_vert,
-#     z_r,
-#     xlim_km=150,
-#     nx=100,
-#     ny=100,
-#     zmax=1.2e3,
-#     smooth_params=True,
-#     smooth_window=5,
-#     plot=False,
-#     zlim=1000,
-#     levels=20,
-#     cmap='RdBu_r',
-# ):
-
-#     x = np.linspace(-xlim_km, xlim_km, nx) * 1e3
-#     y = np.linspace(-xlim_km, xlim_km, ny) * 1e3
-
-#     z_grid = np.insert(np.abs(z_r[150, 150, 1:]), 0, 0)
-#     z_grid = z_grid[z_grid < zmax]
-
-#     X, Y = np.meshgrid(x, y, indexing='ij')
-#     nx, ny, nz = len(x), len(y), len(z_grid)
-
-#     U_days = []
-#     V_days = []
-
-#     for day, df in dic_vert[f'Eddy{eddy}'].items():
-
-#         df = df.copy().sort_values('Depth')
-
-#         if smooth_params:
-#             df = smooth_esp_params_depth(
-#                 df,
-#                 window=smooth_window,
-#                 z_col='Depth'
-#             )
-#         else:
-#             df['q11'] = df['Q'].apply(lambda Q: Q[0, 0] if Q is not None else np.nan)
-#             df['q12'] = df['Q'].apply(lambda Q: Q[0, 1] if Q is not None else np.nan)
-#             df['q22'] = df['Q'].apply(lambda Q: Q[1, 1] if Q is not None else np.nan)
-
-#         # shift centres relative to surface centre after smoothing
-#         df['xc'] -= df['xc'].iloc[0]
-#         df['yc'] -= df['yc'].iloc[0]
-
-#         U = np.zeros((nx, ny, nz))
-#         V = np.zeros((nx, ny, nz))
-
-#         for _, data in df.iterrows():
-
-#             if not np.all(np.isfinite([
-#                 data.xc, data.yc,
-#                 data.q11, data.q12, data.q22,
-#                 data.Omega, data.Rc
-#             ])):
-#                 continue
-
-#             k = np.argmin(np.abs(z_grid - abs(data.Depth)))
-
-#             dx = X - data.xc * 1e3
-#             dy = Y - data.yc * 1e3
-
-#             rho2 = (
-#                 data.q11*dx**2
-#                 + 2*data.q12*dx*dy
-#                 + data.q22*dy**2
-#             )
-
-#             fac = data.Omega * np.exp(-rho2 / (data.Rc * 1e3)**2)
-
-#             U[:, :, k] = -fac * (data.q12*dx + data.q22*dy)
-#             V[:, :, k] =  fac * (data.q11*dx + data.q12*dy)
-
-#         U_days.append(U)
-#         V_days.append(V)
-
-#     U_comp = np.mean(U_days, axis=0)
-#     V_comp = np.mean(V_days, axis=0)
-
-#     if not plot:
-#         return X, Y, z_grid, U_comp, V_comp
-
-#     # keep your plotting block unchanged below this point
-
-#     ix0 = np.argmin(np.abs(x))
-#     iy0 = np.argmin(np.abs(y))
-
-#     vmax = np.nanmax(np.abs([U_comp, V_comp]))
-
-#     fig, axs = plt.subplots(
-#         1, 2,
-#         figsize=(11, 4),
-#         sharey=True,
-#         constrained_layout=True
-#     )
-
-#     # zonal section: x-z at y = 0, perpendicular velocity = V
-#     m0 = axs[0].contourf(
-#         x / 1e3,
-#         z_grid,
-#         V_comp[:, iy0, :].T,
-#         cmap=cmap,
-#         vmin=-vmax,
-#         vmax=vmax,
-#         levels=levels,
-#         extend='both'
-#     )
-
-#     axs[0].contour(
-#         x / 1e3,
-#         z_grid,
-#         V_comp[:, iy0, :].T,
-#         levels=[0],
-#         colors='k',
-#         linewidths=2
-#     )
-
-#     axs[0].set_title('Zonal: $v$')
-#     axs[0].set_xlabel('x (km)')
-#     axs[0].set_ylabel('Depth (m)')
-#     axs[0].invert_yaxis()
-#     axs[0].axvline(0, color='k', lw=0.8, ls='--', alpha=.8)
-#     axs[0].set_ylim(zlim, 0)
-
-#     # meridional section: y-z at x = 0, perpendicular velocity = U
-#     axs[1].contourf(
-#         y / 1e3,
-#         z_grid,
-#         U_comp[ix0, :, :].T,
-#         cmap=cmap,
-#         vmin=-vmax,
-#         vmax=vmax,
-#         levels=levels,
-#         extend='both'
-#     )
-
-#     axs[1].contour(
-#         y / 1e3,
-#         z_grid,
-#         U_comp[ix0, :, :].T,
-#         levels=[0],
-#         colors='k',
-#         linewidths=2
-#     )
-
-#     axs[1].set_title('Meridional: $u$')
-#     axs[1].set_xlabel('y (km)')
-#     axs[1].axvline(0, color='k', lw=0.8, ls='--', alpha=.8)
-#     axs[1].set_ylim(zlim, 0)
-
-#     cbar = fig.colorbar(m0, ax=axs, location='right', shrink=0.9)
-#     cbar.set_label('(m s$^{-1}$)')
-
-#     cyc = 'AE' if np.sign(data.w)>0 else 'CE'
-#     fig.suptitle(f'{cyc}{eddy}')
-
-#     return X, Y, z_grid, U_comp, V_comp, fig, axs
-
 def composite_eddy_velocity(
     eddy,
     dic_vert,
@@ -2122,3 +1962,222 @@ def composite_eddy_velocity(
     fig.suptitle(f'{cyc}{eddy}')
 
     return X, Y, z_grid, U_comp, V_comp, fig, axs
+
+# Regioning 
+
+def plot_region_map(
+    ax,
+    X_grid,
+    Y_grid,
+    lon_rho,
+    lat_rho,
+    h,
+    mask_rho,
+    bin_grid,
+    region_mask_grid,
+    levels_lat,
+    levels_lon,
+    lon_split=157,
+    lat_split=-33,
+    title=None,
+):
+    """
+    Plot the six-region map onto an existing axis.
+    """
+
+    ax.contourf(
+        X_grid, Y_grid,
+        np.where(mask_rho == 0, 1, np.nan),
+        levels=[0.5, 1.5],
+        colors=['k'],
+        alpha=0.5
+    )
+
+    ax.contourf(
+        X_grid, Y_grid,
+        bin_grid,
+        levels=np.arange(0.5, 7.5, 1),
+        alpha=0.25,
+        cmap='gist_rainbow'
+    )
+
+    c1 = ax.contour(
+        X_grid, Y_grid,
+        lat_rho,
+        levels=levels_lat,
+        colors='k',
+        linewidths=0.5
+    )
+
+    ax.clabel(
+        c1,
+        fmt=lambda v: f"{np.abs(v):.0f}°S",
+        inline=True,
+        colors='k'
+    )
+
+    c2 = ax.contour(
+        X_grid, Y_grid,
+        lon_rho,
+        levels=levels_lon,
+        colors='k',
+        linewidths=0.5
+    )
+
+    ax.clabel(
+        c2,
+        fmt=lambda v: f"{v:.0f}°E",
+        inline=True,
+        colors='k'
+    )
+
+    ax.contour(
+        X_grid, Y_grid,
+        h,
+        levels=[4000],
+        colors='k',
+        linewidths=1
+    )
+
+    ax.contour(
+        X_grid, Y_grid,
+        region_mask_grid.astype(float),
+        levels=[0.5],
+        colors='magenta',
+        linewidths=2,
+        linestyles='-'
+    )
+
+    ax.contour(
+        X_grid, Y_grid,
+        lon_rho,
+        levels=[lon_split],
+        colors='magenta',
+        linewidths=2,
+        linestyles='-'
+    )
+
+    ax.contour(
+        X_grid, Y_grid,
+        np.where(mask_rho, lat_rho, np.nan),
+        levels=[lat_split],
+        colors='magenta',
+        linewidths=2,
+        linestyles='-'
+    )
+
+    labels = [
+        ('S1', 220, 1300),
+        ('S2', 120, 50),
+        ('U1', 400, 1450),
+        ('U2', 800, 1450),
+        ('D1', 400, 700),
+        ('D2', 800, 700),
+    ]
+
+    for txt, x, y in labels:
+        ax.text(
+            x, y, txt,
+            ha='center',
+            va='center',
+            fontsize=11,
+            fontweight='bold'
+        )
+
+    ax.set_aspect('equal')
+    ax.set_xlim(X_grid.min(), X_grid.max())
+    ax.set_ylim(Y_grid.min(), Y_grid.max())
+
+    ax.set_xlabel('x (km)')
+    ax.set_ylabel('y (km)')
+
+    if title is not None:
+        ax.set_title(title)
+
+    return ax
+
+def add_region_column(
+    df,
+    X_grid,
+    Y_grid,
+    lon_rho,
+    lat_rho,
+    h,
+    mask_rho,
+    lon_split=157,
+    lat_split=-33,
+):
+    """
+    Add a Region column (S1, S2, U1, D1, U2, D2)
+    to a dataframe containing xc and yc coordinates.
+    """
+
+    region_mask_grid = (
+        (h < 4e3)
+        & (X_grid < 400)
+        & (lon_rho < 154.85)
+        & (mask_rho == 1)
+    )
+
+    bin_grid = np.full(X_grid.shape, np.nan)
+
+    # Shelf
+    bin_grid[region_mask_grid & (lat_rho >= lat_split)] = 1
+    bin_grid[region_mask_grid & (lat_rho <  lat_split)] = 2
+
+    # Offshore west
+    bin_grid[
+        (~region_mask_grid)
+        & (lon_rho < lon_split)
+        & (mask_rho == 1)
+        & (lat_rho >= lat_split)
+    ] = 3
+
+    bin_grid[
+        (~region_mask_grid)
+        & (lon_rho < lon_split)
+        & (mask_rho == 1)
+        & (lat_rho < lat_split)
+    ] = 4
+
+    # Offshore east
+    bin_grid[
+        (lon_rho >= lon_split)
+        & (mask_rho == 1)
+        & (lat_rho >= lat_split)
+    ] = 5
+
+    bin_grid[
+        (lon_rho >= lon_split)
+        & (mask_rho == 1)
+        & (lat_rho < lat_split)
+    ] = 6
+
+    tree = cKDTree(
+        np.column_stack([X_grid.ravel(), Y_grid.ravel()])
+    )
+
+    _, idx = tree.query(
+        np.column_stack([df.xc, df.yc])
+    )
+
+    region_map = {
+        1: 'S1',
+        2: 'S2',
+        3: 'U1',
+        4: 'D1',
+        5: 'U2',
+        6: 'D2'
+    }
+
+    df = df.copy()
+
+    df['Region'] = (
+        pd.Series(
+            bin_grid.ravel()[idx],
+            index=df.index
+        )
+        .map(region_map)
+    )
+
+    return df
