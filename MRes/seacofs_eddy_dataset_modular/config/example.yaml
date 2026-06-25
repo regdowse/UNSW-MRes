@@ -1,7 +1,11 @@
 paths:
+  # Directory containing outer_avg_*.nc model files.
   model_root: /srv/scratch/z3533156/26year_BRAN2020
+  # Parent directory where all pipeline outputs are written.
   output_root: /srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular
+  # Reference depth array used by vertical profile interpolation.
   z_r: /srv/scratch/z5297792/z_r.npy
+  # Directory containing ESP_zonodo/functions.py for DOPPIO fitting.
   esp_zonodo: /home/z5297792/ESP_zonodo
 
 files:
@@ -9,8 +13,11 @@ files:
   model_pattern: outer_avg_*.nc
 
 parallel:
+  # Number of model files to process at once for file-level stages.
   workers: 16
+  # Use "process" for CPU-heavy work; use "thread" only when memory sharing is useful.
   backend: process
+  # If true, existing output partitions are skipped on rerun.
   skip_existing: true
 
 nencioli:
