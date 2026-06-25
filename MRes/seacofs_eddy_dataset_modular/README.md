@@ -73,13 +73,21 @@ Reusable functions live under `src/seacofs_eddy_dataset/core/`:
 - `doppio.py`: transect, radius, local eddy geometry, and DOPPIO table helpers.
 - `tracking.py`: surface eddy QC before temporal linking.
 - `vertical.py`: 3D-to-depth interpolation and profile table helpers.
-- `tilt.py`: tilt displacement and summary metrics.
+- `esp.py`: adapter for the external ESP_zonodo DOPPIO functions.
+- `tilt.py`: tilt displacement, weighted tilt fitting, and summary metrics.
 
 Stage modules under `src/seacofs_eddy_dataset/stages/` should orchestrate I/O,
 parallel execution, and resume behaviour. They should call `core/` functions
 rather than accumulating science logic directly.
 
 ## Example Usage
+
+Install the package into the Python environment you will use for the run:
+
+```bash
+cd MRes/seacofs_eddy_dataset_modular
+python -m pip install -e .
+```
 
 ```bash
 python -m seacofs_eddy_dataset.cli run-stage detect_nencioli --config config/example.yaml
@@ -91,9 +99,13 @@ There is also a concise notebook control panel at
 `notebooks/run_pipeline.ipynb`. It loads `config/local.yaml`, runs selected
 pipeline stages, and shows quick output summaries.
 
-`detect_nencioli` is implemented first. It writes one parquet partition per
-`outer_avg_*.nc` file under `output_root/detections/`, using names like
-`fnumber=01461.parquet`.
+All stages are now implemented as runnable Python modules. The long-running
+file-level stages (`detect_nencioli`, `fit_doppio_surface`, and
+`compute_vertical_profiles`) write one parquet partition per `outer_avg_*.nc`
+file using names like `fnumber=01461.parquet`. Tracking, processing, QC, tilt,
+and analysis stages write consolidated parquet tables under `output_root`.
 
-The remaining stages are scaffolded and will be implemented by moving logic out
-of the existing notebooks in order.
+The DOPPIO surface and vertical stages still depend on the external
+ESP_zonodo `functions.py` used by the original notebooks. Set
+`paths.esp_zonodo` in your local config to that directory before running those
+stages.
