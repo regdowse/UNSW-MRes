@@ -95,6 +95,53 @@ python -m seacofs_eddy_dataset.cli run-stage fit_doppio_surface --config config/
 python -m seacofs_eddy_dataset.cli run-all --config config/example.yaml
 ```
 
+## Output And Parallelisation
+
+Set output locations and parallel worker counts in your config file. Start by
+copying `config/example.yaml` to `config/local.yaml`, then edit the paths:
+
+```yaml
+paths:
+  model_root: /srv/scratch/z3533156/26year_BRAN2020
+  output_root: /srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular
+  z_r: /srv/scratch/z5297792/z_r.npy
+  esp_zonodo: /home/z5297792/ESP_zonodo
+
+parallel:
+  workers: 16
+  backend: process
+  skip_existing: true
+```
+
+`output_root` is the parent directory for every generated file. The pipeline
+creates this layout underneath it:
+
+```text
+output_root/
+  detections/
+    fnumber=01461.parquet
+  surface_eddies/
+    fnumber=01461.parquet
+  tracked/
+    eddy_tracks.parquet
+  processed/
+    eddy_dataset_processed.parquet
+  vertical_profiles/
+    fnumber=01461.parquet
+  vertical_profiles_confirmed/
+    profiles.parquet
+  tilt/
+    tilt_dataset.parquet
+  analysis/
+    tilt_summary.parquet
+    profile_tilt_summaries.parquet
+```
+
+`workers` controls how many model files are processed at once for the long
+file-level stages: detection, DOPPIO surface fitting, and vertical profile
+extraction. With `skip_existing: true`, reruns skip output partitions that
+already exist, so interrupted runs can resume without starting from scratch.
+
 There is also a concise notebook control panel at
 `notebooks/run_pipeline.ipynb`. It loads `config/local.yaml`, runs selected
 pipeline stages, and shows quick output summaries.
