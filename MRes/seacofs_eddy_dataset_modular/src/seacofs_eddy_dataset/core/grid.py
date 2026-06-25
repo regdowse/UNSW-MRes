@@ -72,6 +72,11 @@ def read_reference_grid(path: str | Path) -> Grid:
     )
 
 
+def regular_xy_grid(grid: Grid, resolution_km: float) -> tuple[np.ndarray, np.ndarray]:
+    x_new = np.arange(0, grid.x_grid[-1], resolution_km)
+    y_new = np.arange(0, grid.y_grid[-1], resolution_km)
+    return np.meshgrid(x_new, y_new, indexing="ij")
+
+
 def fnumber_from_outer_avg(path: str | Path) -> int:
     return int(Path(path).stem.split("_")[-1])
-
