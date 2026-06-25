@@ -87,4 +87,9 @@ python -m seacofs_eddy_dataset.cli run-stage fit_doppio_surface --config config/
 python -m seacofs_eddy_dataset.cli run-all --config config/example.yaml
 ```
 
-The commands above are scaffolded first. The next step is to move the existing notebook logic into the corresponding stage modules.
+`detect_nencioli` is implemented first. It writes one parquet partition per
+`outer_avg_*.nc` file under `output_root/detections/`, using names like
+`fnumber=01461.parquet`.
+
+The remaining stages are scaffolded and will be implemented by moving logic out
+of the existing notebooks in order.
