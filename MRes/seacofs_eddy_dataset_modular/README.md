@@ -87,6 +87,10 @@ python -m seacofs_eddy_dataset.cli run-stage fit_doppio_surface --config config/
 python -m seacofs_eddy_dataset.cli run-all --config config/example.yaml
 ```
 
+There is also a concise notebook control panel at
+`notebooks/run_pipeline.ipynb`. It loads `config/local.yaml`, runs selected
+pipeline stages, and shows quick output summaries.
+
 `detect_nencioli` is implemented first. It writes one parquet partition per
 `outer_avg_*.nc` file under `output_root/detections/`, using names like
 `fnumber=01461.parquet`.
