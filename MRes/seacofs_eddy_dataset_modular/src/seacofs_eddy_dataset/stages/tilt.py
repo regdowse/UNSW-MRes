@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from seacofs_eddy_dataset.config import PipelineConfig
+from seacofs_eddy_dataset.core.tilt import add_tilt_displacement, summarise_tilt
 
 
 def run(config: PipelineConfig) -> None:
@@ -8,6 +9,7 @@ def run(config: PipelineConfig) -> None:
 
     This will be extracted from `tilt_dataset.ipynb` and related tilt notebooks.
     """
+    _ = (add_tilt_displacement, summarise_tilt)
     raise NotImplementedError("Move tilt dataset calculation logic here from tilt_dataset.ipynb")
 
 

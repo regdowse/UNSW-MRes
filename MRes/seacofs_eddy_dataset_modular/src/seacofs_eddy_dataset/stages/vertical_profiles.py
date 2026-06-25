@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from seacofs_eddy_dataset.config import PipelineConfig
+from seacofs_eddy_dataset.core.doppio import local_eddy_arrays, nearest_ij, transect_indexer
+from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths, surface_profile_row
 
 
 def compute_profiles_for_file(path: Path, config: PipelineConfig):
@@ -11,6 +13,7 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig):
     This will be extracted from `vert_dataset.ipynb` and should write one atomic
     partition per work unit rather than appending to one large pickle.
     """
+    _ = (interp_3d_to_reference_depths, local_eddy_arrays, nearest_ij, surface_profile_row, transect_indexer)
     raise NotImplementedError("Move vertical profile logic here from vert_dataset.ipynb")
 
 

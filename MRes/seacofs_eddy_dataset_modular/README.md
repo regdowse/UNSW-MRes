@@ -63,6 +63,22 @@ The current notebooks map onto this folder roughly as follows:
 - `vert_dataset.ipynb` -> `src/seacofs_eddy_dataset/stages/vertical_profiles.py`
 - `tilt_dataset.ipynb` -> `src/seacofs_eddy_dataset/stages/tilt.py`
 
+## Function Modules
+
+Reusable functions live under `src/seacofs_eddy_dataset/core/`:
+
+- `grid.py`: reference grid loading, Cartesian grid construction, filename helpers.
+- `velocity.py`: fill-value cleaning, velocity rotation, interpolation.
+- `nencioli.py`: Nencioli eddy detection kernel.
+- `doppio.py`: transect, radius, local eddy geometry, and DOPPIO table helpers.
+- `tracking.py`: surface eddy QC before temporal linking.
+- `vertical.py`: 3D-to-depth interpolation and profile table helpers.
+- `tilt.py`: tilt displacement and summary metrics.
+
+Stage modules under `src/seacofs_eddy_dataset/stages/` should orchestrate I/O,
+parallel execution, and resume behaviour. They should call `core/` functions
+rather than accumulating science logic directly.
+
 ## Example Usage
 
 ```bash
