@@ -23,16 +23,17 @@ output_root/
     fnumber=01461.parquet
   tracked/
     eddy_tracks.parquet
+  processed/
     eddy_dataset_processed.parquet
   vertical_profiles/
     fnumber=01461.parquet
   vertical_profiles_confirmed/
-    fnumber=01461.parquet
+    profiles.parquet
   tilt/
     tilt_dataset.parquet
   analysis/
-    figures/
-    tables/
+    tilt_summary.parquet
+    profile_tilt_summaries.parquet
 ```
 
 ## Current Notebook Mapping
