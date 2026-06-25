@@ -22,6 +22,13 @@ surface_fit:
   transect_radius_km: 30.0
   omega0_abs_threshold: 5.0e-5
   center_error_mad_threshold: 4.0
+  omega_units_scale: 1.0e-3
+
+tracking:
+  length_scale_km: 50.0
+  omega0_scale: 1.0e-5
+  radius_threshold: 1.0
+  lookback_days: 4
 
 vertical_profiles:
   transect_radius_km: 30.0
@@ -29,7 +36,14 @@ vertical_profiles:
   rho_max_km: 200.0
   rho_min_km: 30.0
   max_depth_levels: null
+  target_depths: null
 
 tilt:
   min_profile_depth_count: 3
   min_track_length_days: 2
+  smoothing_days: 6
+  depth_interval_m: 10
+  max_depth_m: 1000
+  min_depth_range_m: 200
+  min_points: 5
+  bearing_offset_deg: 20.0
