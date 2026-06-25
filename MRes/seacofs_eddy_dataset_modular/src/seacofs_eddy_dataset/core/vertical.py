@@ -9,10 +9,13 @@ def interp_3d_to_reference_depths(var3d, z3d, target_depths) -> np.ndarray:
     out = np.full(var3d.shape[:2] + (target_depths.size,), np.nan)
     for i in range(var3d.shape[0]):
         for j in range(var3d.shape[1]):
+            z = np.abs(np.asarray(z3d[i, j, :], dtype=float))
+            values = np.asarray(var3d[i, j, :], dtype=float)
+            order = np.argsort(z)
             out[i, j, :] = np.interp(
                 target_depths,
-                z3d[i, j, :],
-                var3d[i, j, :],
+                z[order],
+                values[order],
                 left=np.nan,
                 right=np.nan,
             )
@@ -49,4 +52,3 @@ def completed_eddy_days(profile_dict: dict) -> pd.DataFrame:
             day = int(str(day_key).replace("Day", ""))
             rows.append({"Eddy": eddy, "Day": day})
     return pd.DataFrame(rows, columns=["Eddy", "Day"])
-
