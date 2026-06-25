@@ -1,0 +1,35 @@
+paths:
+  model_root: /srv/scratch/z3533156/26year_BRAN2020
+  output_root: /srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular
+  z_r: /srv/scratch/z5297792/z_r.npy
+  esp_zonodo: /home/z5297792/ESP_zonodo
+
+files:
+  grid_reference: outer_avg_01461.nc
+  model_pattern: outer_avg_*.nc
+
+parallel:
+  workers: 16
+  backend: process
+  skip_existing: true
+
+nencioli:
+  a: 4
+  b: 3
+  interpolation_resolution_km: 1.0
+
+surface_fit:
+  transect_radius_km: 30.0
+  omega0_abs_threshold: 5.0e-5
+  center_error_mad_threshold: 4.0
+
+vertical_profiles:
+  transect_radius_km: 30.0
+  max_jump_km: 100.0
+  rho_max_km: 200.0
+  rho_min_km: 30.0
+  max_depth_levels: null
+
+tilt:
+  min_profile_depth_count: 3
+  min_track_length_days: 2
