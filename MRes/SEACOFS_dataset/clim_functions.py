@@ -1976,6 +1976,7 @@ def make_region_grids(
     shelf_hmax=4000,
     shelf_xmax=400,
     shelf_lonmax=154.85,
+    shelf_offset=100
 ):
     """
     Create region_mask_grid and bin_grid for regions:
@@ -1988,7 +1989,16 @@ def make_region_grids(
         & (lon_rho < shelf_lonmax)
         & (mask_rho == 1)
     )
-
+    # roll shelf boundary over to the East
+    dx = abs(np.nanmedian(np.diff(X_grid, axis=0)))  # km
+    max_shift = int(round(shelf_offset / dx))
+    region_mask_grid_expanded = region_mask_grid.copy()
+    for shift in range(1, max_shift + 1):
+        shifted = np.roll(region_mask_grid, shift, axis=0)
+        shifted[:shift, :] = False   # remove wrap-around
+        region_mask_grid_expanded |= shifted
+    region_mask_grid = region_mask_grid_expanded
+        
     bin_grid = np.full(X_grid.shape, np.nan)
 
     # Shelf
@@ -2025,6 +2035,8 @@ def make_region_grids(
 
     return region_mask_grid, bin_grid
 
+
+
 def plot_region_map(
     ax,
     X_grid,
@@ -2037,12 +2049,15 @@ def plot_region_map(
     levels_lon,
     lon_split=157,
     lat_split=-33,
+    shelf_offset=100,
     title=None,
     borders_only=False
 ):
     """
     Plot the six-region map onto an existing axis.
     """
+    if ax is None:
+        _, ax = plt.subplots()
 
     region_mask_grid, bin_grid = make_region_grids(
         X_grid,
@@ -2052,7 +2067,8 @@ def plot_region_map(
         h,
         mask_rho,
         lon_split=lon_split,
-        lat_split=lat_split
+        lat_split=lat_split,
+        shelf_offset=shelf_offset,
     )
 
     if not borders_only:
@@ -2179,6 +2195,8 @@ def add_region_column(
     mask_rho,
     lon_split=157,
     lat_split=-33,
+    shelf_offset=80
+    
 ):
     """
     Add a Region column (S1, S2, U1, D1, U2, D2)
@@ -2193,7 +2211,8 @@ def add_region_column(
         h,
         mask_rho,
         lon_split=lon_split,
-        lat_split=lat_split
+        lat_split=lat_split,
+        shelf_offset=shelf_offset,
     )
 
     tree = cKDTree(
@@ -2224,136 +2243,3 @@ def add_region_column(
     )
 
     return df
-
-# def plot_region_map(
-#     ax,
-#     X_grid,
-#     Y_grid,
-#     lon_rho,
-#     lat_rho,
-#     h,
-#     mask_rho,
-#     bin_grid,
-#     region_mask_grid,
-#     levels_lat,
-#     levels_lon,
-#     lon_split=157,
-#     lat_split=-33,
-#     title=None,
-#     borders_only=False
-# ):
-#     """
-#     Plot the six-region map onto an existing axis.
-#     """
-
-#     ax.contourf(
-#         X_grid, Y_grid,
-#         np.where(mask_rho == 0, 1, np.nan),
-#         levels=[0.5, 1.5],
-#         colors=['k'],
-#         alpha=0.5
-#     )
-
-#     ax.contourf(
-#         X_grid, Y_grid,
-#         bin_grid,
-#         levels=np.arange(0.5, 7.5, 1),
-#         alpha=0.25,
-#         cmap='gist_rainbow'
-#     )
-
-#     c1 = ax.contour(
-#         X_grid, Y_grid,
-#         lat_rho,
-#         levels=levels_lat,
-#         colors='k',
-#         linewidths=0.5
-#     )
-
-#     ax.clabel(
-#         c1,
-#         fmt=lambda v: f"{np.abs(v):.0f}°S",
-#         inline=True,
-#         colors='k'
-#     )
-
-#     c2 = ax.contour(
-#         X_grid, Y_grid,
-#         lon_rho,
-#         levels=levels_lon,
-#         colors='k',
-#         linewidths=0.5
-#     )
-
-#     ax.clabel(
-#         c2,
-#         fmt=lambda v: f"{v:.0f}°E",
-#         inline=True,
-#         colors='k'
-#     )
-
-#     ax.contour(
-#         X_grid, Y_grid,
-#         h,
-#         levels=[4000],
-#         colors='k',
-#         linewidths=1
-#     )
-
-#     ax.contour(
-#         X_grid, Y_grid,
-#         region_mask_grid.astype(float),
-#         levels=[0.5],
-#         colors='magenta',
-#         linewidths=2,
-#         linestyles='-'
-#     )
-
-#     ax.contour(
-#         X_grid, Y_grid,
-#         lon_rho,
-#         levels=[lon_split],
-#         colors='magenta',
-#         linewidths=2,
-#         linestyles='-'
-#     )
-
-#     ax.contour(
-#         X_grid, Y_grid,
-#         np.where(mask_rho, lat_rho, np.nan),
-#         levels=[lat_split],
-#         colors='magenta',
-#         linewidths=2,
-#         linestyles='-'
-#     )
-
-#     labels = [
-#         ('S1', 220, 1300),
-#         ('S2', 120, 50),
-#         ('U1', 400, 1450),
-#         ('U2', 800, 1450),
-#         ('D1', 400, 700),
-#         ('D2', 800, 700),
-#     ]
-
-#     for txt, x, y in labels:
-#         ax.text(
-#             x, y, txt,
-#             ha='center',
-#             va='center',
-#             fontsize=11,
-#             fontweight='bold'
-#         )
-
-#     ax.set_aspect('equal')
-#     ax.set_xlim(X_grid.min(), X_grid.max())
-#     ax.set_ylim(Y_grid.min(), Y_grid.max())
-
-#     ax.set_xlabel('x (km)')
-#     ax.set_ylabel('y (km)')
-
-#     if title is not None:
-#         ax.set_title(title)
-
-#     return ax
-
