@@ -188,18 +188,37 @@ def angle_diff_180(a, b):
     return np.abs((a - b + 180.0) % 360.0 - 180.0)
 
 
-def add_pv_gradient_terms(df: pd.DataFrame, grid: Grid) -> pd.DataFrame:
+def add_pv_gradient_terms(df: pd.DataFrame, grid: Grid, core_mean: bool = False) -> pd.DataFrame:
     """Compute planetary, topographic, and total shallow-water PV-gradient terms."""
 
     out = df.copy()
     out["f"] = grid.f[out.ic, out.jc]
-    out["h"] = grid.h[out.ic, out.jc]
+    if core_mean:
+        out = compute_core_mean(
+            out, grid,
+            fixed_field=grid.h,
+            colname="h"
+        )
+    else:
+        out["h"] = grid.h[out.ic, out.jc]
 
     dhdx, dhdy = phys_grad(grid.h, grid.X_grid * 1e3, grid.Y_grid * 1e3, grid.mask_rho)
     dh_dN = -(np.sin(grid.angle) * dhdx + np.cos(grid.angle) * dhdy)
     dh_dE = -(np.cos(grid.angle) * dhdx - np.sin(grid.angle) * dhdy)
-    out["dhdx"] = dh_dE[out.ic, out.jc]
-    out["dhdy"] = dh_dN[out.ic, out.jc]
+    if core_mean:
+        out = compute_core_mean(
+            out, grid,
+            fixed_field=dh_dE,
+            colname="dhdx"
+        )
+        out = compute_core_mean(
+            out, grid,
+            fixed_field=dh_dN,
+            colname="dhdy"
+        )
+    else:
+        out["dhdx"] = dh_dE[out.ic, out.jc]
+        out["dhdy"] = dh_dN[out.ic, out.jc]
 
     dfdx, dfdy = phys_grad(grid.f, grid.X_grid * 1e3, grid.Y_grid * 1e3, grid.mask_rho)
     df_dN = -(np.sin(grid.angle) * dfdx + np.cos(grid.angle) * dfdy)
@@ -543,6 +562,8 @@ def rose_plot(
     lat_split: float = -33.5,
     legend_title: str = "tilt dist. (km)",
     show: bool = True,
+    rtick_flag=False,
+    cmaps = ['Reds', 'Blues']
 ):
     """Plot shelf windroses and regional map windrose insets for AE and CE.
 
@@ -579,7 +600,7 @@ def rose_plot(
     # if "Region" in df_plot.columns:
     #     df_plot["bin_id"] = df_plot["Region"].map(bin_map)
     # else:
-    df_plot, _ = assign_six_regions(
+    df_plot, _ = assign_six_regions( # always rerun for regions
         df_plot,
         grid,
         lon_split=lon_split,
@@ -589,10 +610,15 @@ def rose_plot(
     df_plot = df_plot.dropna(subset=["bin_id", mag, theta])
     df_plot["bin_id"] = df_plot["bin_id"].astype(int)
 
+    # colors_cmps = [
+    #     plt.cm[cmaps[0]](np.linspace(0, 1, len(mag_bins) - 1)),
+    #     plt.cm[cmaps[1]](np.linspace(0, 1, len(mag_bins) - 1)),
+    # ]
     colors_cmps = [
-        plt.cm.Reds(np.linspace(0, 1, len(mag_bins) - 1)),
-        plt.cm.Blues(np.linspace(0, 1, len(mag_bins) - 1)),
+        plt.get_cmap(cmaps[0])(np.linspace(0, 1, len(mag_bins) - 1)),
+        plt.get_cmap(cmaps[1])(np.linspace(0, 1, len(mag_bins) - 1)),
     ]
+    
     cell_w = (grid.X_grid.max() - grid.X_grid.min()) / 3
     cell_h = (grid.Y_grid.max() - grid.Y_grid.min()) / 4
     cmap_bins = plt.cm.gist_ncar
@@ -641,7 +667,8 @@ def rose_plot(
         iax.set_frame_on(False)
         return iax
 
-    def plot_standalone_windrose(ax, data, colors, b, title="", tick_flag=False, rmax=None):
+    def plot_standalone_windrose(ax, data, colors, b, title="",
+                                 tick_flag=False, rmax=None, rtick_flag=True):
         counts, angles, width, k = data
         if counts is None:
             ax.set_axis_off()
@@ -662,15 +689,15 @@ def rose_plot(
                 label=label,
             )
             bottom += counts[i]
-
-        local_rmax = np.max(counts.sum(axis=0))
-        local_rmax = 1 if local_rmax == 0 else local_rmax
-        ax.set_rlim(0, rmax if rmax is not None else local_rmax + 5)
-        step = 50
-        top = int(np.ceil(local_rmax / step) * step)
-        rticks = np.arange(step, top + step, step)
-        ax.set_rticks(rticks)
-        ax.set_yticklabels([f"{t:g}" for t in rticks], fontsize=8)
+        if rtick_flag:
+            local_rmax = np.max(counts.sum(axis=0))
+            local_rmax = 1 if local_rmax == 0 else local_rmax
+            ax.set_rlim(0, rmax if rmax is not None else local_rmax + 5)
+            step = 50
+            top = int(np.ceil(local_rmax / step) * step)
+            rticks = np.arange(step, top + step, step)
+            ax.set_rticks(rticks)
+            ax.set_yticklabels([f"{t:g}" for t in rticks], fontsize=8)
         ax.set_rlabel_position(135)
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
@@ -730,6 +757,7 @@ def rose_plot(
                 b,
                 title=f"{cyc}, S{b}",
                 tick_flag=b == 2,
+                rtick_flag=rtick_flag
             )
 
     for p, cyc in enumerate(["AE", "CE"]):
@@ -846,3 +874,238 @@ def match_old_eddies(sample_eddies_old, df_eddies_old, df_eddies, min_overlap_fr
             matches.append({"old_eddy": eddy_old, "new_eddy": np.nan, "overlap_frac": 0.0, "mean_dist_km": np.nan, "n_overlap": 0})
     return pd.DataFrame(matches)
 
+def compute_core_mean(
+    # df_eddies,
+    # X_grid,
+    # Y_grid,
+    # mask_rho,
+    df_data: pd.DataFrame,
+    grid: Grid,
+    *,
+    base_path=None,
+    varname=None,
+    fixed_field=None,
+    colname=None,
+    circle_region_flag=False
+):
+    """
+    Core-mean of either
+      - a 3D field (x,y,t) loaded as <varname>_<fnumber>.npy, or
+      - a fixed 2D field (x,y) passed in as fixed_field.
+    """
+    if fixed_field is None and (base_path is None or varname is None):
+        raise ValueError("Either fixed_field OR (base_path and varname) must be provided.")
+    mode_2d = fixed_field is not None
+    if colname is None:
+        if mode_2d:
+            colname = "field_core"
+        else:
+            colname = f"{varname}"
+    df = df_data[~df_data["TiltDis"].isna()].copy()
+    chunks = []
+    if mode_2d:
+        field2d = np.where(grid.mask_rho, fixed_field, np.nan)
+    for fname, df_loc in df.groupby("fname"):
+        if not mode_2d:
+            fnumber  = int(fname[-8:-3])
+            base_day = fnumber + 1
+            data3d = np.load(f"{base_path}/{varname}_{fnumber:05}.npy")
+            data3d = np.where(grid.mask_rho[:, :, None], data3d, np.nan)
+        df_loc = df_loc.copy().reset_index(drop=False)
+        core_vals = np.full(len(df_loc), np.nan)
+        for idx, row in enumerate(df_loc.itertuples(index=False)):
+            dx = grid.X_grid - row.xc
+            dy = grid.Y_grid - row.yc
+            if circle_region_flag:
+                if hasattr(row, 'rmax') and np.isfinite(row.rmax):
+                    rho2 = (dx**2 + dy**2)
+                    core_mask = rho2 <= row.rmax**2
+                else:
+                    rho2 = np.full_like(dx, np.nan, dtype=float)
+            else:
+                if hasattr(row, 'q11') and np.isfinite(row.q11):
+                    rho2 = (
+                        row.q11 * dx**2
+                        + 2 * row.q12 * dx * dy
+                        + row.q22 * dy**2
+                    )
+                elif isinstance(row.Q, np.ndarray) and row.Q.shape == (2, 2) and np.isfinite(row.Q).all():
+                    rho2 = (
+                        row.Q[0, 0] * dx**2
+                        + 2 * row.Q[1, 0] * dx * dy
+                        + row.Q[1, 1] * dy**2
+                    )
+                else:
+                    rho2 = np.full_like(dx, np.nan, dtype=float)
+                core_mask = rho2 <= row.Rc**2 / 2
+            if not core_mask.any():
+                continue
+            if mode_2d:
+                vals = field2d[core_mask]
+            else:
+                t_idx = int(row.Day - base_day)
+                vals = data3d[:, :, t_idx][core_mask]
+            core_vals[idx] = np.nanmean(vals)
+        chunks.append(pd.DataFrame({
+            "Eddy": df_loc["Eddy"].to_numpy(),
+            "Day":  df_loc["Day"].to_numpy(),
+            colname: core_vals
+        }))
+    df_core = pd.concat(chunks, ignore_index=True)
+    df_out = df_data.merge(
+        df_core[["Eddy", "Day", colname]],
+        how="left",
+        on=["Eddy", "Day"]
+    )
+    return df_out
+
+def plot_binned_median_map(
+    # df_eddies,
+   df_data: pd.DataFrame,
+    grid: Grid,
+    *,
+    metric='Rc',
+    # X_grid=X_grid,
+    # Y_grid=Y_grid,
+    # h=h,
+    # mask_rho=mask_rho,
+    # lat_rho=lat_rho,
+    # lon_rho=lon_rho,
+    vmin=0,
+    vmax=120,
+    rule='fd',
+    levels_lat=[-40, -35, -30, -25],
+    levels_lon=[150, 155, 160],
+    cmaps={'AE': 'Reds', 'CE': 'Blues'},
+    units='km',
+    figsize=(9, 8)
+):
+    df_data = df_data.copy()
+    xbins = bin_edges_fd(pd.to_numeric(df_data.xc, errors='coerce').to_numpy(dtype=float), grid.X_grid, rule=rule)
+    ybins = bin_edges_fd(pd.to_numeric(df_data.yc, errors='coerce').to_numpy(dtype=float), grid.Y_grid, rule=rule)
+
+    norm = Normalize(vmin=vmin, vmax=vmax)
+
+    fig, axs = plt.subplots(1, 2, figsize=figsize, sharey=True)
+
+    for ax, cyc in zip(axs, ['AE', 'CE']):
+
+        df = (
+            df_data[df_data.Cyc.eq(cyc)]
+            .dropna(subset=['xc', 'yc', metric])
+            .sort_values(metric, kind='mergesort', ignore_index=True)
+        )
+
+        ax.contour(grid.X_grid, grid.Y_grid, grid.h, levels=[4000], colors='k')
+
+        H = binned_median(
+            df.xc.to_numpy(dtype=float),
+            df.yc.to_numpy(dtype=float),
+            df[metric].to_numpy(dtype=float),
+            xbins,
+            ybins
+        )
+
+        m = ax.pcolormesh(
+            xbins, ybins, H,
+            cmap=cmaps[cyc],
+            norm=norm,
+            shading='auto',
+            rasterized=True
+        )
+
+        cb = fig.colorbar(m, ax=ax, location='top', shrink=0.9, pad=0.02)
+        cb.set_label(fr'{cyc} median surface ${metric}$ ({units})', fontsize=12)
+        cb.set_ticks(np.linspace(vmin, vmax, 5))
+
+        ax.contourf(
+            grid.X_grid, grid.Y_grid, np.where(grid.mask_rho == 0, 1, np.nan),
+            levels=[0.5, 1.5], colors=['k'], alpha=0.5
+        )
+
+        c1 = ax.contour(grid.X_grid, grid.Y_grid, lat_rho, levels=levels_lat, colors='k', linewidths=0.5)
+        ax.clabel(c1, fmt=lambda v: f"{-v:.0f}°S", inline=True, colors='k')
+
+        c2 = ax.contour(grid.X_grid, grid.Y_grid, lon_rho, levels=levels_lon, colors='k', linewidths=0.5)
+        ax.clabel(c2, fmt=lambda v: f"{v:.0f}°E", inline=True, colors='k')
+
+        ax.axis('equal')
+        ax.set_xlim(15, grid.X_grid.max())
+        ax.set_ylim(grid.Y_grid.min(), grid.Y_grid.max())
+        ax.set_xlabel('x (km)', fontsize=11)
+
+    axs[0].set_ylabel('y (km)', fontsize=11)
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig, axs
+
+def plot_pv_dominance(
+    df: pd.DataFrame,
+    grid: Grid,
+    *,
+    # df,
+    # X_grid=X_grid,
+    # Y_grid=Y_grid,
+    # h=h,
+    # mask_rho=mask_rho,
+    rule='fd',
+    figsize=(6, 6),
+):
+
+    xbins = bin_edges_fd(df.xc.values, X_grid, rule=rule)
+    ybins = bin_edges_fd(df.yc.values, Y_grid, rule=rule)
+
+    fig, axs = plt.subplots(1, 2, figsize=figsize, sharey=True, constrained_layout=True)
+
+    for ax, cyc in zip(axs, ['AE', 'CE']):
+
+        d = df[df.Cyc == cyc].copy()
+        d['topo_dom'] = d.PV_grad_topo_mag > d.PV_grad_plan_mag
+
+        ax.contourf(
+            X_grid, Y_grid, np.where(mask_rho == 0, 1, np.nan),
+            levels=[0.5, 1.5], colors=['r' if cyc=='AE' else 'b'], alpha=.25
+        )
+        ax.contour(
+            grid.X_grid,
+            grid.Y_grid,
+            grid.mask_rho,
+            levels=[0.5],
+            colors='r' if cyc == 'AE' else 'b',
+            linewidths=2,
+            zorder=15
+        )
+
+        H = binned_statistic_2d(
+            d.xc, d.yc, d.topo_dom.astype(float),
+            statistic='mean',
+            bins=[xbins, ybins]
+        ).statistic.T
+
+        ax.contour(grid.X_grid, grid.Y_grid, grid.h, levels=[4000], colors='k')
+
+        m = ax.pcolormesh(
+            xbins, ybins, H,
+            cmap='PiYG_r', #'RdBu_r',
+            vmin=0, vmax=1,
+            shading='auto'
+        )
+
+        if cyc == 'AE':
+            # ax.set_title(cyc, fontweight='bold', color='r')
+            ax.text(100, 900, cyc, fontweight='bold', color='r', fontsize=14)
+        else:
+            # ax.set_title(cyc, fontweight='bold', color='b')
+            ax.text(100, 900, cyc, fontweight='bold', color='b', fontsize=14)
+        ax.axis('equal')
+        ax.set_xlabel('x (km)')
+        ax.set_facecolor('lightgrey')
+
+    axs[0].set_ylabel('y (km)')
+
+    cb = fig.colorbar(m, ax=axs, location='top', shrink=0.85)
+    cb.set_label('Fraction of eddy-days with $|\\nabla PV_{plan}| < |\\nabla PV_{topo}|$', fontsize=13)
+
+    return fig, axs
