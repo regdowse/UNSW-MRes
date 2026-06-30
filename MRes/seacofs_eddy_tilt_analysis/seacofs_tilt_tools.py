@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 from scipy.stats import linregress
-
+from scipy.stats import binned_statistic_2d
 
 DEFAULT_EDDY_PATH = Path(
     "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
@@ -484,6 +484,10 @@ def plot_windrose(ax, df: pd.DataFrame, *, title: str = "", mag_bins=(0, 10, 20,
         bottom += counts[i]
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
+    if df.Cyc.iloc[0] == "AE":
+        ax.set_rlabel_position(225)
+    else:
+        ax.set_rlabel_position(315)
     ax.set_title(title)
     return ax
 
@@ -959,6 +963,62 @@ def compute_core_mean(
     )
     return df_out
 
+def bin_edges_fd(x, xgrid, rule='fd'): # Freedman-Diaconis (fg) rationale
+    n = len(x)
+    if n < 2: return np.array([np.min(x), np.max(x)])
+    rng = np.ptp(x)
+    iqr = np.subtract(*np.percentile(x, [75, 25]))
+    std = np.std(x, ddof=1)
+
+    # raw width (km)
+    if rule.lower() == 'fd':
+        h = 2 * (iqr if iqr > 0 else 1.349*std) / (n ** (1/3))
+    else:  # 'scott'
+        h = 3.5 * std / (n ** (1/3))
+
+    # fallback if degenerate
+    if not np.isfinite(h) or h <= 0:
+        h = rng / max(10, np.sqrt(n))
+
+    # snap to grid spacing
+    base = _grid_step(xgrid)
+    h = _nice_step(h, base)
+
+    lo = np.floor(np.min(x) / h) * h
+    hi = np.ceil(np.max(x) / h) * h
+    return np.arange(lo, hi + h, h)
+
+def _grid_step(G):
+    gx = np.diff(np.sort(np.unique(G.ravel())))
+    return np.nanmedian(gx[gx > 0])
+
+def _nice_step(h, base):
+    s = h / base
+    for k in [1, 2, 2.5, 5, 10]:
+        if s <= k: return k * base
+    return np.ceil(s) * base
+
+def binned_median(x, y, v, xbins, ybins):
+    ix = np.digitize(x, xbins) - 1
+    iy = np.digitize(y, ybins) - 1
+
+    nx, ny = len(xbins) - 1, len(ybins) - 1
+    ok = (
+        (ix >= 0) & (ix < nx) &
+        (iy >= 0) & (iy < ny) &
+        np.isfinite(v)
+    )
+
+    bins = {}
+    for i, j, val in zip(ix[ok], iy[ok], v[ok]):
+        bins.setdefault((j, i), []).append(val)
+
+    out = np.full((ny, nx), np.nan)
+    for (j, i), vals in bins.items():
+        out[j, i] = np.nanmedian(vals)
+
+    return out
+    
 def plot_binned_median_map(
     # df_eddies,
    df_data: pd.DataFrame,
@@ -1052,10 +1112,11 @@ def plot_pv_dominance(
     # mask_rho=mask_rho,
     rule='fd',
     figsize=(6, 6),
+    clabel='Fraction of eddy-days with $|\\nabla PV_{plan}| < |\\nabla PV_{topo}|$'
 ):
 
-    xbins = bin_edges_fd(df.xc.values, X_grid, rule=rule)
-    ybins = bin_edges_fd(df.yc.values, Y_grid, rule=rule)
+    xbins = bin_edges_fd(df.xc.values, grid.X_grid, rule=rule)
+    ybins = bin_edges_fd(df.yc.values, grid.Y_grid, rule=rule)
 
     fig, axs = plt.subplots(1, 2, figsize=figsize, sharey=True, constrained_layout=True)
 
@@ -1065,7 +1126,7 @@ def plot_pv_dominance(
         d['topo_dom'] = d.PV_grad_topo_mag > d.PV_grad_plan_mag
 
         ax.contourf(
-            X_grid, Y_grid, np.where(mask_rho == 0, 1, np.nan),
+            grid.X_grid, grid.Y_grid, np.where(grid.mask_rho == 0, 1, np.nan),
             levels=[0.5, 1.5], colors=['r' if cyc=='AE' else 'b'], alpha=.25
         )
         ax.contour(
@@ -1106,6 +1167,6 @@ def plot_pv_dominance(
     axs[0].set_ylabel('y (km)')
 
     cb = fig.colorbar(m, ax=axs, location='top', shrink=0.85)
-    cb.set_label('Fraction of eddy-days with $|\\nabla PV_{plan}| < |\\nabla PV_{topo}|$', fontsize=13)
+    cb.set_label(clabel, fontsize=13)
 
     return fig, axs
