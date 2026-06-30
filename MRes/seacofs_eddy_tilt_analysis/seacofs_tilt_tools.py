@@ -566,16 +566,16 @@ def rose_plot(
     )
 
     df_plot = df_data.copy()
-    if "Region" in df_plot.columns:
-        df_plot["bin_id"] = df_plot["Region"].map(bin_map)
-    else:
-        df_plot, _ = assign_six_regions(
-            df_plot,
-            grid,
-            lon_split=lon_split,
-            lat_split=lat_split,
-            shelf_offset=shelf_offset,
-        )
+    # if "Region" in df_plot.columns:
+    #     df_plot["bin_id"] = df_plot["Region"].map(bin_map)
+    # else:
+    df_plot, _ = assign_six_regions(
+        df_plot,
+        grid,
+        lon_split=lon_split,
+        lat_split=lat_split,
+        shelf_offset=shelf_offset,
+    )
     df_plot = df_plot.dropna(subset=["bin_id", mag, theta])
     df_plot["bin_id"] = df_plot["bin_id"].astype(int)
 
@@ -741,13 +741,17 @@ def rose_plot(
             norm=norm_bins,
             alpha=0.25,
         )
-        c1 = ax.contour(grid.X_grid, grid.Y_grid, grid.lat_rho, levels=LEVELS_LAT, colors="k", linewidths=0.5)
-        ax.clabel(c1, fmt=lambda v: f"{np.abs(v):.0f} deg S", inline=True, colors="k")
-        c2 = ax.contour(grid.X_grid, grid.Y_grid, grid.lon_rho, levels=LEVELS_LON, colors="k", linewidths=0.5)
-        ax.clabel(c2, fmt=lambda v: f"{v:.0f} deg E", inline=True, colors="k")
+        c1 = ax.contour(grid.X_grid, grid.Y_grid, grid.lat_rho, levels=LEVELS_LAT,
+                        colors="k", linewidths=0.5, linestyles='-')
+        ax.clabel(c1, fmt=lambda v: f"{np.abs(v):.0f} °S", inline=True, colors="k")
+        c2 = ax.contour(grid.X_grid, grid.Y_grid, grid.lon_rho, levels=LEVELS_LON,
+                        colors="k", linewidths=0.5, linestyles='-')
+        ax.clabel(c2, fmt=lambda v: f"{v:.0f} °E", inline=True, colors="k")
         ax.contour(grid.X_grid, grid.Y_grid, grid.h, levels=[4000], colors="k", linewidths=1)
-        ax.contour(grid.X_grid, grid.Y_grid, region_mask_grid.astype(float), levels=[0.5], colors="magenta", linewidths=2)
-        ax.contour(grid.X_grid, grid.Y_grid, grid.lon_rho, levels=[lon_split], colors="magenta", linewidths=2)
+        ax.contour(grid.X_grid, grid.Y_grid, region_mask_grid.astype(float), levels=[0.5],
+                   colors="magenta", linewidths=2, linestyles='-')
+        ax.contour(grid.X_grid, grid.Y_grid, grid.lon_rho, levels=[lon_split],
+                   colors="magenta", linewidths=2, linestyles='-')
         ax.contour(
             grid.X_grid,
             grid.Y_grid,
@@ -755,6 +759,7 @@ def rose_plot(
             levels=[lat_split],
             colors="magenta",
             linewidths=2,
+            linestyles='-'
         )
 
         for b in [3, 4, 5, 6]:
@@ -830,3 +835,4 @@ def match_old_eddies(sample_eddies_old, df_eddies_old, df_eddies, min_overlap_fr
         else:
             matches.append({"old_eddy": eddy_old, "new_eddy": np.nan, "overlap_frac": 0.0, "mean_dist_km": np.nan, "n_overlap": 0})
     return pd.DataFrame(matches)
+
