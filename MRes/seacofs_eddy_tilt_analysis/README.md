@@ -4,7 +4,8 @@ This folder is a cleaned working set for the core vertically checked eddy-tilt
 analysis. It keeps the original exploratory notebooks intact in
 `SEACOFS_dataset/detect_track_tilt_dataset/vert_checked_dataset/tilt_analysis_vert_checked/`
 and collects the selected analysis notebooks here with shared utilities in
-`seacofs_tilt_tools.py`.
+`seacofs_tilt_tools.py`. The helper module is self-contained and does not
+depend on the old `clim_functions.py` module.
 
 ## Structure
 
