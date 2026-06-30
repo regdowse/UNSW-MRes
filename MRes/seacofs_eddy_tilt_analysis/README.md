@@ -9,7 +9,8 @@ and collects the selected analysis notebooks here with shared utilities in
 ## Structure
 
 - `seacofs_tilt_tools.py` contains shared loading, grid, PV-gradient,
-  propagation, binning, histogram, windrose, and sample-matching helpers.
+  propagation, binning, histogram, windrose, regional rose-plot, and
+  sample-matching helpers.
 - `pv_tilt.ipynb` analyses alignment between tilt direction and PV-gradient
   terms.
 - `secondary_tilt_factors.ipynb` compares tilt distance with vorticity,

@@ -12,6 +12,7 @@ import sys
 
 import netCDF4 as nc
 import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
@@ -458,10 +459,35 @@ def plot_windrose(ax, df: pd.DataFrame, *, title: str = "", mag_bins=(0, 10, 20,
     return ax
 
 
-def assign_six_regions(df: pd.DataFrame, grid: Grid, *, lon_split: float = 157.0, lat_split: float = -33.5) -> tuple[pd.DataFrame, np.ndarray]:
-    """Assign eddy days to the six map bins used by the windrose map."""
+def make_region_grids(
+    grid: Grid,
+    *,
+    lon_split: float = 157.0,
+    lat_split: float = -33.5,
+    shelf_hmax: float = 4000.0,
+    shelf_xmax: float = 400.0,
+    shelf_lonmax: float = 154.85,
+    shelf_offset: float = 80.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Create the shelf/upstream/downstream six-bin region grids."""
 
-    region_mask = (grid.h < 4e3) & (grid.X_grid < 400) & (grid.lon_rho < 154.85) & (grid.mask_rho == 1)
+    region_mask = (
+        (grid.h < shelf_hmax)
+        & (grid.X_grid < shelf_xmax)
+        & (grid.lon_rho < shelf_lonmax)
+        & (grid.mask_rho == 1)
+    )
+
+    if shelf_offset:
+        dx = abs(np.nanmedian(np.diff(grid.X_grid, axis=0)))
+        max_shift = int(round(shelf_offset / dx)) if dx > 0 else 0
+        expanded = region_mask.copy()
+        for shift in range(1, max_shift + 1):
+            shifted = np.roll(region_mask, shift, axis=0)
+            shifted[:shift, :] = False
+            expanded |= shifted
+        region_mask = expanded
+
     bin_grid = np.full(grid.X_grid.shape, np.nan)
     bin_grid[region_mask & (grid.lat_rho >= lat_split)] = 1
     bin_grid[region_mask & (grid.lat_rho < lat_split)] = 2
@@ -469,6 +495,20 @@ def assign_six_regions(df: pd.DataFrame, grid: Grid, *, lon_split: float = 157.0
     bin_grid[(~region_mask) & (grid.lon_rho < lon_split) & (grid.mask_rho == 1) & (grid.lat_rho < lat_split)] = 4
     bin_grid[(grid.lon_rho >= lon_split) & (grid.mask_rho == 1) & (grid.lat_rho >= lat_split)] = 5
     bin_grid[(grid.lon_rho >= lon_split) & (grid.mask_rho == 1) & (grid.lat_rho < lat_split)] = 6
+    return region_mask, bin_grid
+
+
+def assign_six_regions(
+    df: pd.DataFrame,
+    grid: Grid,
+    *,
+    lon_split: float = 157.0,
+    lat_split: float = -33.5,
+    shelf_offset: float = 80.0,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Assign eddy days to the six map bins used by the windrose map."""
+
+    _, bin_grid = make_region_grids(grid, lon_split=lon_split, lat_split=lat_split, shelf_offset=shelf_offset)
 
     out = df.copy()
     tree = cKDTree(np.column_stack([grid.X_grid.ravel(), grid.Y_grid.ravel()]))
@@ -477,6 +517,276 @@ def assign_six_regions(df: pd.DataFrame, grid: Grid, *, lon_split: float = 157.0
     out = out.dropna(subset=["bin_id"])
     out["bin_id"] = out["bin_id"].astype(int)
     return out, bin_grid
+
+
+def rose_plot(
+    df_data: pd.DataFrame,
+    grid: Grid,
+    *,
+    mag: str = "TiltDis",
+    theta: str = "TiltDir",
+    frac: float = 2.6,
+    mag_bins=(0, 10, 20, 30, 40, np.inf),
+    direction_offset: float = -20.0,
+    shelf_offset: float = 80.0,
+    lon_split: float = 157.0,
+    lat_split: float = -33.5,
+    legend_title: str = "tilt dist. (km)",
+    show: bool = True,
+):
+    """Plot shelf windroses and regional map windrose insets for AE and CE.
+
+    Parameters
+    ----------
+    df_data:
+        Eddy-day table containing ``Cyc`` plus the magnitude and direction
+        columns. If a ``Region`` column exists it is used for bin assignment;
+        otherwise eddy centres are mapped to the grid by ``xc``/``yc``.
+    grid:
+        SEACOFS grid returned by :func:`load_grid`.
+    mag, theta:
+        Magnitude and true-north bearing columns to count in each windrose.
+    direction_offset:
+        Degrees added to ``theta`` before binning. The original plot used
+        ``-20`` to align tilt bearings with the plotted grid orientation.
+    """
+
+    required = {"Cyc", mag, theta}
+    missing = required - set(df_data.columns)
+    if missing:
+        raise KeyError(f"df_data is missing required columns: {sorted(missing)}")
+
+    region_map = {1: "S1", 2: "S2", 3: "U1", 4: "D1", 5: "U2", 6: "D2"}
+    bin_map = {v: k for k, v in region_map.items()}
+    region_mask_grid, bin_grid = make_region_grids(
+        grid,
+        lon_split=lon_split,
+        lat_split=lat_split,
+        shelf_offset=shelf_offset,
+    )
+
+    df_plot = df_data.copy()
+    if "Region" in df_plot.columns:
+        df_plot["bin_id"] = df_plot["Region"].map(bin_map)
+    else:
+        df_plot, _ = assign_six_regions(
+            df_plot,
+            grid,
+            lon_split=lon_split,
+            lat_split=lat_split,
+            shelf_offset=shelf_offset,
+        )
+    df_plot = df_plot.dropna(subset=["bin_id", mag, theta])
+    df_plot["bin_id"] = df_plot["bin_id"].astype(int)
+
+    colors_cmps = [
+        plt.cm.Reds(np.linspace(0, 1, len(mag_bins) - 1)),
+        plt.cm.Blues(np.linspace(0, 1, len(mag_bins) - 1)),
+    ]
+    cell_w = (grid.X_grid.max() - grid.X_grid.min()) / 3
+    cell_h = (grid.Y_grid.max() - grid.Y_grid.min()) / 4
+    cmap_bins = plt.cm.gist_ncar
+    levels_bins = np.arange(0.5, 7.5, 1)
+    norm_bins = BoundaryNorm(levels_bins, cmap_bins.N)
+
+    def get_bin_color(b, alpha=0.25):
+        color = list(cmap_bins(norm_bins(b)))
+        color[-1] = alpha
+        return color
+
+    def windrose_counts_local(directions_deg, magnitudes):
+        data = windrose_counts(directions_deg, magnitudes, mag_bins=mag_bins)
+        if data is None:
+            return None, None, None, None
+        counts, angles, width = data
+        return counts, angles, width, counts.shape[1]
+
+    def add_windrose(ax, x0, y0, data, colors, rmax):
+        counts, angles, width, k = data
+        if counts is None:
+            return None
+
+        size = frac * min(cell_w, cell_h)
+        iax = ax.inset_axes(
+            [x0 - size / 2, y0 - size / 2, size, size],
+            transform=ax.transData,
+            projection="polar",
+        )
+        bottom = np.zeros(k)
+        for i in range(len(mag_bins) - 1):
+            iax.bar(
+                angles,
+                counts[i],
+                width=width,
+                bottom=bottom,
+                color=colors[i],
+                edgecolor=(0, 0, 0, 0.1),
+            )
+            bottom += counts[i]
+        iax.set_rlim(0, rmax)
+        iax.set_theta_zero_location("N")
+        iax.set_theta_direction(-1)
+        iax.set_xticks([])
+        iax.set_yticks([])
+        iax.set_frame_on(False)
+        return iax
+
+    def plot_standalone_windrose(ax, data, colors, b, title="", tick_flag=False, rmax=None):
+        counts, angles, width, k = data
+        if counts is None:
+            ax.set_axis_off()
+            return
+
+        ax.set_facecolor(get_bin_color(b, alpha=0.25))
+        bottom = np.zeros(k)
+        for i in range(len(mag_bins) - 1):
+            hi = r"$\infty$" if np.isinf(mag_bins[i + 1]) else f"{mag_bins[i + 1]:g}"
+            label = f"[{mag_bins[i]:g}-{hi})"
+            ax.bar(
+                angles,
+                counts[i],
+                width=width,
+                bottom=bottom,
+                color=colors[i],
+                edgecolor=(0, 0, 0, 0.1),
+                label=label,
+            )
+            bottom += counts[i]
+
+        local_rmax = np.max(counts.sum(axis=0))
+        local_rmax = 1 if local_rmax == 0 else local_rmax
+        ax.set_rlim(0, rmax if rmax is not None else local_rmax + 5)
+        step = 50
+        top = int(np.ceil(local_rmax / step) * step)
+        rticks = np.arange(step, top + step, step)
+        ax.set_rticks(rticks)
+        ax.set_yticklabels([f"{t:g}" for t in rticks], fontsize=8)
+        ax.set_rlabel_position(135)
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+        ax.set_xticks(np.deg2rad([340, 70, 160, 250]))
+        ax.set_xticklabels(["N", "E", "S", "W"], fontsize=9)
+        ax.set_title(title, fontsize=11)
+
+        if tick_flag:
+            ax.legend(
+                title=f"{title[:2]}\n{legend_title}",
+                loc="center left",
+                bbox_to_anchor=(0.95, 1.5),
+                frameon=True,
+                fontsize=9,
+                title_fontsize=9,
+            )
+
+    bin_centers = {}
+    for b in range(1, 7):
+        ii, jj = np.where(bin_grid == b)
+        bin_centers[b] = (np.nanmean(grid.X_grid[ii, jj]), np.nanmean(grid.Y_grid[ii, jj]))
+
+    counts = {}
+    for cyc in ["AE", "CE"]:
+        for b in range(1, 7):
+            sub = df_plot[(df_plot.Cyc == cyc) & (df_plot.bin_id == b)]
+            directions = (sub[theta].to_numpy(float) + direction_offset) % 360.0
+            magnitudes = sub[mag].to_numpy(float)
+            counts[(cyc, b)] = windrose_counts_local(directions, magnitudes)
+
+    rmax_map = 0
+    for cyc in ["AE", "CE"]:
+        for b in [3, 4, 5, 6]:
+            c = counts[(cyc, b)][0]
+            if c is not None:
+                rmax_map = max(rmax_map, np.max(c.sum(axis=0)))
+    rmax_map = 1 if rmax_map == 0 else rmax_map
+
+    fig = plt.figure(figsize=(20, 8), constrained_layout=False)
+    gs = fig.add_gridspec(1, 4, width_ratios=[1.2, 2.6, 1.2, 2.6], wspace=0.45)
+    gs_AE_small = gs[0, 0].subgridspec(2, 1)
+    gs_CE_small = gs[0, 2].subgridspec(2, 1)
+    small_axes = {
+        ("AE", 1): fig.add_subplot(gs_AE_small[0, 0], projection="polar"),
+        ("AE", 2): fig.add_subplot(gs_AE_small[1, 0], projection="polar"),
+        ("CE", 1): fig.add_subplot(gs_CE_small[0, 0], projection="polar"),
+        ("CE", 2): fig.add_subplot(gs_CE_small[1, 0], projection="polar"),
+    }
+    axs = {"AE": fig.add_subplot(gs[0, 1]), "CE": fig.add_subplot(gs[0, 3])}
+
+    for p, cyc in enumerate(["AE", "CE"]):
+        for b in [1, 2]:
+            plot_standalone_windrose(
+                small_axes[(cyc, b)],
+                counts[(cyc, b)],
+                colors_cmps[p],
+                b,
+                title=f"{cyc}, S{b}",
+                tick_flag=b == 2,
+            )
+
+    for p, cyc in enumerate(["AE", "CE"]):
+        ax = axs[cyc]
+        ax.contourf(
+            grid.X_grid,
+            grid.Y_grid,
+            np.where(grid.mask_rho == 0, 1, np.nan),
+            levels=[0.5, 1.5],
+            colors=["k"],
+            alpha=0.5,
+        )
+        ax.contourf(
+            grid.X_grid,
+            grid.Y_grid,
+            bin_grid,
+            levels=levels_bins,
+            cmap=cmap_bins,
+            norm=norm_bins,
+            alpha=0.25,
+        )
+        c1 = ax.contour(grid.X_grid, grid.Y_grid, grid.lat_rho, levels=LEVELS_LAT, colors="k", linewidths=0.5)
+        ax.clabel(c1, fmt=lambda v: f"{np.abs(v):.0f} deg S", inline=True, colors="k")
+        c2 = ax.contour(grid.X_grid, grid.Y_grid, grid.lon_rho, levels=LEVELS_LON, colors="k", linewidths=0.5)
+        ax.clabel(c2, fmt=lambda v: f"{v:.0f} deg E", inline=True, colors="k")
+        ax.contour(grid.X_grid, grid.Y_grid, grid.h, levels=[4000], colors="k", linewidths=1)
+        ax.contour(grid.X_grid, grid.Y_grid, region_mask_grid.astype(float), levels=[0.5], colors="magenta", linewidths=2)
+        ax.contour(grid.X_grid, grid.Y_grid, grid.lon_rho, levels=[lon_split], colors="magenta", linewidths=2)
+        ax.contour(
+            grid.X_grid,
+            grid.Y_grid,
+            np.where(grid.mask_rho == 1, grid.lat_rho, np.nan),
+            levels=[lat_split],
+            colors="magenta",
+            linewidths=2,
+        )
+
+        for b in [3, 4, 5, 6]:
+            x0, y0 = bin_centers[b]
+            add_windrose(ax, x0, y0, counts[(cyc, b)], colors_cmps[p], rmax_map)
+
+        for label, x, y in [
+            ("S1", 220, 1300),
+            ("S2", 120, 50),
+            ("U1", 400, 1450),
+            ("U2", 800, 1450),
+            ("D1", 620, 750),
+            ("D2", 850, 750),
+        ]:
+            ax.text(x, y, label, ha="center", va="center", fontsize=12, fontweight="bold")
+
+        ax.set_aspect("equal")
+        ax.set_xlim(grid.X_grid.min(), grid.X_grid.max())
+        ax.set_ylim(grid.Y_grid.min(), grid.Y_grid.max())
+        ax.set_xlabel("x (km)")
+        ax.set_ylabel("y (km)")
+        ax.yaxis.tick_right()
+        ax.yaxis.set_label_position("right")
+
+    for key, label in [(("AE", 1), "a)"), (("AE", 2), "b)"), (("CE", 1), "d)"), (("CE", 2), "e)")]:
+        small_axes[key].text(-0.15, 1.02, label, transform=small_axes[key].transAxes, fontsize=12, fontweight="bold", va="top", ha="left")
+    axs["AE"].text(-0.08, 1.02, "c)", transform=axs["AE"].transAxes, fontsize=12, fontweight="bold", va="top", ha="left")
+    axs["CE"].text(-0.08, 1.02, "f)", transform=axs["CE"].transAxes, fontsize=12, fontweight="bold", va="top", ha="left")
+
+    if show:
+        plt.show()
+    return fig, {"map_axes": axs, "shelf_axes": small_axes, "counts": counts, "bin_grid": bin_grid}
 
 
 def point_from_bearing(origin, distance, bearing_deg):
