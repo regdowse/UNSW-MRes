@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 
 import netCDF4 as nc
 import matplotlib.pyplot as plt
@@ -39,7 +38,6 @@ DEFAULT_BETA_EDDY_PATH = Path(
 )
 DEFAULT_GRID_PATH = Path("/srv/scratch/z3533156/26year_BRAN2020/outer_avg_01461.nc")
 DEFAULT_ZR_PATH = Path("/srv/scratch/z5297792/z_r.npy")
-DEFAULT_CLIM_FUNCTIONS_DIR = Path("/home/z5297792/UNSW-MRes/MRes/SEACOFS_dataset")
 
 KM_PER_DAY_TO_M_PER_S = 1000.0 / 86400.0
 LEVELS_LAT = [-40, -35, -30, -25]
@@ -57,7 +55,6 @@ class Paths:
     beta_eddies: Path = DEFAULT_BETA_EDDY_PATH
     grid: Path = DEFAULT_GRID_PATH
     z_r: Path = DEFAULT_ZR_PATH
-    clim_functions_dir: Path = DEFAULT_CLIM_FUNCTIONS_DIR
 
 
 @dataclass
@@ -75,23 +72,6 @@ class Grid:
     Y_grid: np.ndarray
 
 
-def configure_clim_functions(path: Path | str = DEFAULT_CLIM_FUNCTIONS_DIR) -> None:
-    """Add the existing SEACOFS helper folder to ``sys.path``."""
-
-    path = str(path)
-    if path not in sys.path:
-        sys.path.append(path)
-
-
-def clim_function(name: str):
-    """Import one function from the existing ``clim_functions`` module."""
-
-    configure_clim_functions()
-    from clim_functions import __dict__ as clim_namespace
-
-    return clim_namespace[name]
-
-
 def distance_km(lat1, lon1, lat2, lon2, earth_radius_km: float = 6357.0):
     """Great-circle distance in kilometres."""
 
@@ -100,6 +80,32 @@ def distance_km(lat1, lon1, lat2, lon2, earth_radius_km: float = 6357.0):
     dlon = lon2 - lon1
     a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
     return earth_radius_km * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+
+
+def phys_grad(F, X, Y, mask=None):
+    """Gradient of ``F`` with respect to physical coordinates ``X`` and ``Y``.
+
+    ``X`` and ``Y`` must be 2-D coordinate arrays in the same units. The
+    returned gradients are in ``F`` per ``X``/``Y`` unit. A ROMS-style ocean
+    mask can be supplied where 1 is ocean and 0 is land.
+    """
+
+    x_i, x_j = np.gradient(X)
+    y_i, y_j = np.gradient(Y)
+    F_i, F_j = np.gradient(F)
+    jacobian = x_i * y_j - x_j * y_i
+    dFdx = (F_i * y_j - F_j * y_i) / jacobian
+    dFdy = (-F_i * x_j + F_j * x_i) / jacobian
+
+    bad = np.isclose(jacobian, 0)
+    dFdx[bad] = np.nan
+    dFdy[bad] = np.nan
+
+    if mask is not None:
+        ocean = mask.astype(bool)
+        dFdx = np.where(ocean, dFdx, np.nan)
+        dFdy = np.where(ocean, dFdy, np.nan)
+    return dFdx, dFdy
 
 
 def load_grid(grid_path: Path | str = DEFAULT_GRID_PATH, z_r_path: Path | str = DEFAULT_ZR_PATH) -> Grid:
@@ -151,8 +157,13 @@ def load_vertical_dictionary(paths: Paths = Paths()):
 def add_region_labels(df: pd.DataFrame, grid: Grid) -> pd.DataFrame:
     """Attach the six SEACOFS region labels used in the original notebooks."""
 
-    add_region_column = clim_function("add_region_column")
-    return add_region_column(df, grid.X_grid, grid.Y_grid, grid.lon_rho, grid.lat_rho, grid.h, grid.mask_rho)
+    _, bin_grid = make_region_grids(grid, lat_split=-33.0, shelf_offset=80.0)
+    tree = cKDTree(np.column_stack([grid.X_grid.ravel(), grid.Y_grid.ravel()]))
+    _, idx = tree.query(np.column_stack([df.xc, df.yc]))
+    region_map = {1: "S1", 2: "S2", 3: "U1", 4: "D1", 5: "U2", 6: "D2"}
+    out = df.copy()
+    out["Region"] = pd.Series(bin_grid.ravel()[idx], index=out.index).map(region_map)
+    return out
 
 
 def add_time_coordinates(df: pd.DataFrame) -> pd.DataFrame:
@@ -180,7 +191,6 @@ def angle_diff_180(a, b):
 def add_pv_gradient_terms(df: pd.DataFrame, grid: Grid) -> pd.DataFrame:
     """Compute planetary, topographic, and total shallow-water PV-gradient terms."""
 
-    phys_grad = clim_function("phys_grad")
     out = df.copy()
     out["f"] = grid.f[out.ic, out.jc]
     out["h"] = grid.h[out.ic, out.jc]
