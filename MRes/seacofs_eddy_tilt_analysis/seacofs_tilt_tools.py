@@ -373,7 +373,7 @@ def circular_mean_deg_true_north(deg):
     return np.rad2deg(np.arctan2(s, c)) % 360
 
 
-def shared_bins(*arrays, min_bins: int = 12, max_bins: int = 40):
+def shared_bins(*arrays, min_bins: int = 12, max_bins: int = 500):
     """Freedman-Diaconis-like bins shared across one or more arrays."""
 
     vals = np.concatenate([np.asarray(a, float)[np.isfinite(a)] for a in arrays if len(np.asarray(a))])
@@ -388,20 +388,27 @@ def shared_bins(*arrays, min_bins: int = 12, max_bins: int = 40):
     return np.linspace(np.nanmin(vals), np.nanmax(vals), n + 1)
 
 
-def mirrored_hist(ax, ae, ce, bins, xlabel, *, ylabel="Count", colors=("darkred", "navy")):
+def mirrored_hist(ax, ae, ce, bins, xlabel, *, ylabel="Frequency", colors=("r", "b"),
+                  alpha=.8, xlim=None):
     """Plot AE above zero and CE below zero using shared bins."""
-
+    if xlim is not None:
+        ae = ae[(ae>=xlim[0])&(ae<=xlim[1])]
+        ce = ce[(ce>=xlim[0])&(ce<=xlim[1])]
     ae_counts, edges = np.histogram(np.asarray(ae, float)[np.isfinite(ae)], bins=bins)
     ce_counts, _ = np.histogram(np.asarray(ce, float)[np.isfinite(ce)], bins=bins)
     centers = 0.5 * (edges[:-1] + edges[1:])
     widths = np.diff(edges)
-    ax.bar(centers, ae_counts, width=widths, align="center", color=colors[0], alpha=0.35, label="AE")
-    ax.bar(centers, -ce_counts, width=widths, align="center", color=colors[1], alpha=0.35, label="CE")
+    ax.bar(centers, ae_counts, width=widths, align="center", color=colors[0], alpha=alpha, label="AE")
+    ax.bar(centers, -ce_counts, width=widths, align="center", color=colors[1], alpha=alpha, label="CE")
     ax.axhline(0, color="0.3", lw=0.8)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    ylim_abs_max = max(np.abs(ax.get_ylim()))
+    ax.set_ylim(-ylim_abs_max, ylim_abs_max)
+    if xlim is not None:
+        ax.set_xlim(xlim)
     return ax
 
 
@@ -466,7 +473,8 @@ def windrose_counts(directions_deg, magnitudes, *, mag_bins, dir_bins=None, dir_
     return counts, angles, width
 
 
-def plot_windrose(ax, df: pd.DataFrame, *, title: str = "", mag_bins=(0, 10, 20, 30, 40, np.inf), colors=None):
+def plot_windrose(ax, df: pd.DataFrame, *, title: str = "", mag_bins=(0, 10, 20, 30, 40, np.inf),
+                  colors=None, step=None, rlim=None):
     """Draw one stacked tilt windrose."""
 
     if colors is None:
@@ -484,10 +492,17 @@ def plot_windrose(ax, df: pd.DataFrame, *, title: str = "", mag_bins=(0, 10, 20,
         bottom += counts[i]
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
-    if df.Cyc.iloc[0] == "AE":
-        ax.set_rlabel_position(225)
-    else:
-        ax.set_rlabel_position(315)
+    if step is not None:
+        local_rmax = np.max(counts.sum(axis=0))
+        local_rmax = 1 if local_rmax == 0 else local_rmax
+        print(local_rmax)
+        top = int(np.ceil(local_rmax / step) * step)
+        rticks = np.arange(step, top + step, step)
+        ax.set_rticks(rticks)
+    if rlim is not None:
+        ax.set_rlim(0, rlim)
+    if np.any(df.Cyc.isin(["AE", "CE"])):
+        ax.set_rlabel_position(225 if df.Cyc.iloc[0] == "AE" else 315)
     ax.set_title(title)
     return ax
 
@@ -567,7 +582,8 @@ def rose_plot(
     legend_title: str = "tilt dist. (km)",
     show: bool = True,
     rtick_flag=False,
-    cmaps = ['Reds', 'Blues']
+    cmaps = ['Reds', 'Blues'],
+    step=100
 ):
     """Plot shelf windroses and regional map windrose insets for AE and CE.
 
@@ -614,10 +630,6 @@ def rose_plot(
     df_plot = df_plot.dropna(subset=["bin_id", mag, theta])
     df_plot["bin_id"] = df_plot["bin_id"].astype(int)
 
-    # colors_cmps = [
-    #     plt.cm[cmaps[0]](np.linspace(0, 1, len(mag_bins) - 1)),
-    #     plt.cm[cmaps[1]](np.linspace(0, 1, len(mag_bins) - 1)),
-    # ]
     colors_cmps = [
         plt.get_cmap(cmaps[0])(np.linspace(0, 1, len(mag_bins) - 1)),
         plt.get_cmap(cmaps[1])(np.linspace(0, 1, len(mag_bins) - 1)),
@@ -697,7 +709,6 @@ def rose_plot(
             local_rmax = np.max(counts.sum(axis=0))
             local_rmax = 1 if local_rmax == 0 else local_rmax
             ax.set_rlim(0, rmax if rmax is not None else local_rmax + 5)
-            step = 50
             top = int(np.ceil(local_rmax / step) * step)
             rticks = np.arange(step, top + step, step)
             ax.set_rticks(rticks)
@@ -1170,3 +1181,13 @@ def plot_pv_dominance(
     cb.set_label(clabel, fontsize=13)
 
     return fig, axs
+
+def circular_mean_deg_true_north(deg):
+    deg = np.asarray(deg)
+    r = np.deg2rad(deg)
+
+    C = np.mean(np.cos(r))
+    S = np.mean(np.sin(r))
+
+    return np.rad2deg(np.arctan2(S, C)) % 360
+
