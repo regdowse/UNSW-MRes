@@ -27,9 +27,11 @@ nencioli:
 
 surface_fit:
   transect_radius_km: 30.0
+  # Applied to w, Omega0, and Omega when surface_eddies partitions are written.
+  omega_units_scale: 1.0e-3
+  # Threshold is applied to the scaled surface_eddies Omega0 values.
   omega0_abs_threshold: 5.0e-5
   center_error_mad_threshold: 4.0
-  omega_units_scale: 1.0e-3
 
 tracking:
   length_scale_km: 50.0
