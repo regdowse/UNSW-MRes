@@ -11,6 +11,7 @@ from seacofs_eddy_dataset.core.doppio import bad_doppio_row, find_directional_ra
 from seacofs_eddy_dataset.core.esp import load_doppio_functions
 from seacofs_eddy_dataset.core.grid import fnumber_from_outer_avg, read_reference_grid
 from seacofs_eddy_dataset.core.velocity import rotate_uv
+from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths
 from seacofs_eddy_dataset.io import partition_path, write_partition
 from seacofs_eddy_dataset.stages.detection import find_model_files, reference_grid_path
 
@@ -66,6 +67,84 @@ def _bad_row(row, fnumber: int) -> dict:
     return _row_with_q(base, np.nan)
 
 
+def _target_depths_for_surface_check(z_r, settings: dict) -> np.ndarray:
+    configured_depths = settings.get("vertical_check_target_depths")
+    if configured_depths is None:
+        target_depths = np.nanmedian(np.abs(z_r), axis=(0, 1))
+    else:
+        target_depths = np.asarray(configured_depths, dtype=float)
+
+    target_depths = np.sort(target_depths[np.isfinite(target_depths) & (target_depths > 0)])
+    depth_threshold = float(settings.get("vertical_check_depth_m", 50.0))
+    below = target_depths[target_depths <= depth_threshold]
+    above = target_depths[target_depths >= depth_threshold]
+    if above.size:
+        return np.unique(np.concatenate([below, above[:1]]))
+    return below
+
+
+def _load_z_r(config: PipelineConfig):
+    z_r_path = config.raw.get("paths", {}).get("z_r")
+    if not z_r_path:
+        raise KeyError("paths.z_r is required when surface_fit.require_vertical_profile is true")
+    return np.load(Path(z_r_path).expanduser())
+
+
+def _has_vertical_profile_to_depth(
+    *,
+    xc_surface: float,
+    yc_surface: float,
+    w_surface: float,
+    row,
+    u_depth,
+    v_depth,
+    target_depths,
+    grid,
+    doppio,
+    radius_km: float,
+    max_jump_km: float,
+    depth_threshold_m: float,
+) -> bool:
+    xc_prev = xc_surface
+    yc_prev = yc_surface
+    ic = int(row.nic)
+    jc = int(row.njc)
+
+    for depth_index, target_depth in enumerate(target_depths):
+        if (
+            (xc_prev < radius_km)
+            or (xc_prev > grid.X_grid.max() - radius_km)
+            or (yc_prev < radius_km)
+            or (yc_prev > grid.Y_grid.max() - radius_km)
+        ):
+            return False
+
+        u2d, v2d = rotate_uv(u_depth[:, :, depth_index], v_depth[:, :, depth_index], grid.angle)
+        x1, y1, x2, y2, ii, jj = transect_indexer(ic, jc, grid.X_grid, grid.Y_grid, r=radius_km)
+        u1 = u2d[ii, jc]
+        v1 = v2d[ii, jc]
+        u2 = u2d[ic, jj]
+        v2 = v2d[ic, jj]
+        if any(np.all(np.isnan(values)) for values in [u1, v1, u2, v2]):
+            return False
+
+        try:
+            xc, yc, w, _, _ = doppio(x1, y1, u1, v1, x2, y2, u2, v2)
+        except Exception:
+            return False
+
+        if np.sign(w) != np.sign(w_surface) or np.hypot(xc - xc_prev, yc - yc_prev) > max_jump_km:
+            return False
+
+        if target_depth >= depth_threshold_m:
+            return True
+
+        xc_prev = xc
+        yc_prev = yc
+
+    return False
+
+
 def _fit_detection_row(
     row,
     fnumber: int,
@@ -76,6 +155,7 @@ def _fit_detection_row(
     out_core_param_fit,
     radius_km: float,
     omega_scale: float,
+    vertical_check: dict | None = None,
 ) -> dict:
     try:
         x1, y1, x2, y2, ii, jj = transect_indexer(int(row.nic), int(row.njc), grid.X_grid, grid.Y_grid, r=radius_km)
@@ -92,9 +172,11 @@ def _fit_detection_row(
             v_rot[int(row.nic), jj],
         )
         radii = find_directional_radii(u_rot, v_rot, grid.X_grid, grid.Y_grid, xc, yc, q)
-        radius = np.nanmean([radii["up"], radii["right"], radii["down"], radii["left"]])
-        if not np.isfinite(radius):
+        finite_radii = np.asarray([radii["up"], radii["right"], radii["down"], radii["left"]], dtype=float)
+        finite_radii = finite_radii[np.isfinite(finite_radii)]
+        if finite_radii.size == 0:
             return _bad_row(row, fnumber)
+        radius = float(finite_radii.mean())
 
         rho_limit = radius * 1.5
         local = (grid.X_grid >= xc - rho_limit) & (grid.X_grid <= xc + rho_limit)
@@ -111,6 +193,21 @@ def _fit_detection_row(
         if int(mask.sum()) < 10:
             return _bad_row(row, fnumber)
         rc, psi0, omega = out_core_param_fit(xloc[mask], yloc[mask], uloc[mask], vloc[mask], xc, yc, q, w)
+        if vertical_check is not None and not _has_vertical_profile_to_depth(
+            xc_surface=xc,
+            yc_surface=yc,
+            w_surface=w,
+            row=row,
+            u_depth=vertical_check["u_depth"],
+            v_depth=vertical_check["v_depth"],
+            target_depths=vertical_check["target_depths"],
+            grid=grid,
+            doppio=doppio,
+            radius_km=radius_km,
+            max_jump_km=vertical_check["max_jump_km"],
+            depth_threshold_m=vertical_check["depth_threshold_m"],
+        ):
+            return _bad_row(row, fnumber)
     except Exception:
         return _bad_row(row, fnumber)
 
@@ -152,6 +249,16 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
     settings = config.raw.get("surface_fit", {})
     radius_km = float(settings.get("transect_radius_km", 30.0))
     omega_scale = float(settings.get("omega_units_scale", 1e-3))
+    require_vertical_profile = bool(settings.get("require_vertical_profile", True))
+    z_r = None
+    target_depths = None
+    if require_vertical_profile:
+        z_r = _load_z_r(config)
+        if z_r.shape[:2] != grid.X_grid.shape and z_r.shape[-2:] == grid.X_grid.shape:
+            z_r = np.moveaxis(z_r, 0, -1)
+        target_depths = _target_depths_for_surface_check(z_r, settings)
+        if target_depths.size == 0:
+            raise ValueError("No valid surface_fit vertical-check target depths found")
     rows = []
 
     with nc.Dataset(path) as dataset:
@@ -163,6 +270,17 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
             u = dataset["u_eastward"][t, -1, :, :].T
             v = dataset["v_northward"][t, -1, :, :].T
             u_rot, v_rot = rotate_uv(u, v, grid.angle)
+            vertical_check = None
+            if require_vertical_profile:
+                u3d = np.transpose(dataset["u_eastward"][t, :, :, :], (2, 1, 0))
+                v3d = np.transpose(dataset["v_northward"][t, :, :, :], (2, 1, 0))
+                vertical_check = {
+                    "u_depth": interp_3d_to_reference_depths(u3d, z_r, target_depths),
+                    "v_depth": interp_3d_to_reference_depths(v3d, z_r, target_depths),
+                    "target_depths": target_depths,
+                    "max_jump_km": float(settings.get("vertical_check_max_jump_km", 100.0)),
+                    "depth_threshold_m": float(settings.get("vertical_check_depth_m", 50.0)),
+                }
             rows.extend(
                 _fit_detection_row(
                     row,
@@ -174,6 +292,7 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
                     out_core_param_fit,
                     radius_km,
                     omega_scale,
+                    vertical_check,
                 )
                 for row in day_detections.itertuples(index=False)
             )
