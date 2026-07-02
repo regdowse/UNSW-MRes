@@ -39,6 +39,20 @@ tracking:
   radius_threshold: 1.0
   lookback_days: 4
 
+processing:
+  min_duration_days: 21
+  ar_max: 5.0
+  rc_max_km: 300.0
+  rc_r_ratio_max: 1.75
+  omega_abs_max: 5.0e-5
+  psi0_abs_max: 300.0
+  mean_radius_min_km: 15.0
+  max_outer_gap_days: null
+  date_origin: "1990-01-01"
+  file_start_fnumber: 1461
+  file_stride_days: 30
+  file_day_offset: 1462
+
 vertical_profiles:
   transect_radius_km: 30.0
   max_jump_km: 100.0
