@@ -34,10 +34,6 @@ def track_eddies(config: PipelineConfig):
     if df.empty:
         return df
 
-    scale = float(config.raw.get("surface_fit", {}).get("omega_units_scale", 1e-3))
-    for col in ["w", "Omega0", "Omega"]:
-        if col in df.columns:
-            df[col] = df[col] * scale
     df["Cyc"] = df["nCyc"]
     df = df.sort_values(["Day", "yc", "xc"]).reset_index(drop=True)
     df["eddy_idx"] = df.groupby("Day").cumcount()
