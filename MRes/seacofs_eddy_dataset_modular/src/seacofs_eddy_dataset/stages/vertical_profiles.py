@@ -53,11 +53,11 @@ def _q_from_row(row) -> np.ndarray:
     return np.array([[row.q11, row.q12], [row.q12, row.q22]], dtype=float)
 
 
-def _surface_row(row) -> dict:
+def _surface_row(row, fnumber: int) -> dict:
     return {
         "Eddy": int(row.Eddy),
         "Day": int(row.Day),
-        "fnumber": int(row.fnumber),
+        "fnumber": fnumber,
         "Depth": 0.0,
         "z": 0,
         "xc": float(row.xc),
@@ -68,7 +68,7 @@ def _surface_row(row) -> dict:
         "q11": float(row.q11),
         "q12": float(row.q12),
         "q22": float(row.q22),
-        "Omega0": float(row.Omega0),
+        "Omega0": np.nan,
         "Omega": float(row.Omega),
         "Rc": float(row.Rc),
         "psi0": float(row.psi0),
@@ -78,6 +78,7 @@ def _surface_row(row) -> dict:
 
 def _fit_depth(
     row,
+    fnumber: int,
     depth_idx: int,
     depth: float,
     u2d,
@@ -112,7 +113,13 @@ def _fit_depth(
             return None
 
         radii = find_directional_radii(u2d, v2d, grid.X_grid, grid.Y_grid, xc, yc, q)
-        radius = np.nanmean([radii["up"], radii["right"], radii["down"], radii["left"]])
+        radius_values = np.array(
+            [radii["up"], radii["right"], radii["down"], radii["left"]],
+            dtype=float,
+        )
+        if np.all(np.isnan(radius_values)):
+            return None
+        radius = np.nanmean(radius_values)
         if not np.isfinite(radius) or radius < rho_min:
             return None
 
@@ -137,7 +144,7 @@ def _fit_depth(
     return {
         "Eddy": int(row.Eddy),
         "Day": int(row.Day),
-        "fnumber": int(row.fnumber),
+        "fnumber": fnumber,
         "Depth": float(depth),
         "z": int(depth_idx),
         "xc": float(xc),
@@ -159,7 +166,12 @@ def _fit_depth(
 def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
     fnumber = fnumber_from_outer_avg(path)
     df = _processed_dataset(config)
-    df_file = df.loc[df["fnumber"].eq(fnumber)].copy()
+    if "fnumber" in df.columns:
+        df_file = df.loc[df["fnumber"].eq(fnumber)].copy()
+    elif "fname" in df.columns:
+        df_file = df.loc[df["fname"].map(lambda fname: Path(str(fname)).name).eq(path.name)].copy()
+    else:
+        raise KeyError("Processed dataset must contain either 'fnumber' or 'fname'")
     if df_file.empty:
         return pd.DataFrame(columns=PROFILE_COLUMNS)
 
@@ -194,13 +206,14 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
             v_depth = interp_3d_to_reference_depths(v3d, z_r, target_depths)
 
             for row in df_day.itertuples(index=False):
-                rows.append(_surface_row(row))
+                rows.append(_surface_row(row, fnumber))
                 for depth_idx, depth in enumerate(target_depths):
                     if depth <= 0:
                         continue
                     u2d, v2d = rotate_uv(u_depth[:, :, depth_idx], v_depth[:, :, depth_idx], grid.angle)
                     fitted = _fit_depth(
                         row,
+                        fnumber,
                         depth_idx,
                         depth,
                         u2d,
