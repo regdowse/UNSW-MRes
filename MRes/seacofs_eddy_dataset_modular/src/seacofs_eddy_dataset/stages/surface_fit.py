@@ -66,7 +66,17 @@ def _bad_row(row, fnumber: int) -> dict:
     return _row_with_q(base, np.nan)
 
 
-def _fit_detection_row(row, fnumber: int, u_rot, v_rot, grid, doppio, out_core_param_fit, radius_km: float) -> dict:
+def _fit_detection_row(
+    row,
+    fnumber: int,
+    u_rot,
+    v_rot,
+    grid,
+    doppio,
+    out_core_param_fit,
+    radius_km: float,
+    omega_scale: float,
+) -> dict:
     try:
         x1, y1, x2, y2, ii, jj = transect_indexer(int(row.nic), int(row.njc), grid.X_grid, grid.Y_grid, r=radius_km)
         if len(ii) < 3 or len(jj) < 3:
@@ -115,10 +125,10 @@ def _fit_detection_row(row, fnumber: int, u_rot, v_rot, grid, doppio, out_core_p
             "njc": int(row.njc),
             "xc": float(xc),
             "yc": float(yc),
-            "w": float(w),
+            "w": float(w) * omega_scale,
             "Q": q,
-            "Omega0": float(omega0),
-            "Omega": float(omega),
+            "Omega0": float(omega0) * omega_scale,
+            "Omega": float(omega) * omega_scale,
             "Rc": float(rc),
             "psi0": float(psi0),
             "R": float(radius),
@@ -139,7 +149,9 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
 
     grid = read_reference_grid(reference_grid_path(config))
     doppio, out_core_param_fit = load_doppio_functions(config)
-    radius_km = float(config.raw.get("surface_fit", {}).get("transect_radius_km", 30.0))
+    settings = config.raw.get("surface_fit", {})
+    radius_km = float(settings.get("transect_radius_km", 30.0))
+    omega_scale = float(settings.get("omega_units_scale", 1e-3))
     rows = []
 
     with nc.Dataset(path) as dataset:
@@ -152,7 +164,17 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
             v = dataset["v_northward"][t, -1, :, :].T
             u_rot, v_rot = rotate_uv(u, v, grid.angle)
             rows.extend(
-                _fit_detection_row(row, fnumber, u_rot, v_rot, grid, doppio, out_core_param_fit, radius_km)
+                _fit_detection_row(
+                    row,
+                    fnumber,
+                    u_rot,
+                    v_rot,
+                    grid,
+                    doppio,
+                    out_core_param_fit,
+                    radius_km,
+                    omega_scale,
+                )
                 for row in day_detections.itertuples(index=False)
             )
 
