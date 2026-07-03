@@ -180,12 +180,13 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
     doppio, out_core_param_fit = load_doppio_functions(config)
     z_r_path = Path(config.raw["paths"]["z_r"]).expanduser()
     z_r = np.load(z_r_path)
-    if z_r.shape[:2] != grid.X_grid.shape and z_r.shape[-2:] == grid.X_grid.shape:
-        z_r = np.moveaxis(z_r, 0, -1)
+    # if z_r.shape[:2] != grid.X_grid.shape and z_r.shape[-2:] == grid.X_grid.shape:
+    #     z_r = np.moveaxis(z_r, 0, -1)
 
     configured_depths = settings.get("target_depths")
     if configured_depths is None:
-        target_depths = np.nanmedian(np.abs(z_r), axis=(0, 1))
+        # target_depths = np.nanmedian(np.abs(z_r), axis=(0, 1))
+        target_depths = np.abs(z_r[150,150,1:])
     else:
         target_depths = np.asarray(configured_depths, dtype=float)
     max_depth_levels = settings.get("max_depth_levels")

@@ -838,10 +838,11 @@ def rose_plot(
         ax.yaxis.set_label_position("right")
 
     for key, label in [(("AE", 1), "a)"), (("AE", 2), "b)"), (("CE", 1), "d)"), (("CE", 2), "e)")]:
-        small_axes[key].text(-0.15, 1.02, label, transform=small_axes[key].transAxes, fontsize=12, fontweight="bold", va="top", ha="left")
+        small_axes[key].text(-0.15, 1.02, label, transform=small_axes[key].transAxes,
+                             fontsize=12, fontweight="bold", va="top", ha="left")
     axs["AE"].text(-0.08, 1.02, "c)", transform=axs["AE"].transAxes, fontsize=12, fontweight="bold", va="top", ha="left")
     axs["CE"].text(-0.08, 1.02, "f)", transform=axs["CE"].transAxes, fontsize=12, fontweight="bold", va="top", ha="left")
-
+        
     if show:
         plt.show()
     return fig, {"map_axes": axs, "shelf_axes": small_axes, "counts": counts, "bin_grid": bin_grid}

@@ -4,7 +4,7 @@ paths:
   # Parent directory where all pipeline outputs are written.
   output_root: /srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular
   # Reference depth array used by vertical profile interpolation.
-  z_r: /srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/z_r.npy 
+  z_r: /srv/scratch/z5297792/z_r.npy
   # Directory containing ESP_zonodo/functions.py for DOPPIO fitting.
   esp_zonodo: /home/z5297792/ESP_zonodo
 
@@ -27,17 +27,9 @@ nencioli:
 
 surface_fit:
   transect_radius_km: 30.0
-  # Reject surface candidates unless the fitted DOPPIO centre can be followed
-  # vertically to at least this depth.
-  require_vertical_profile: true
-  vertical_check_depth_m: 50.0
-  vertical_check_max_jump_km: 100.0
-  vertical_check_target_depths: null # preset is z_r[150,150,1:] i.e., center of model (x,y,z)
-  # Applied to w, Omega0, and Omega when surface_eddies partitions are written.
-  omega_units_scale: 1.0e-3
-  # Threshold is applied to the scaled surface_eddies Omega0 values.
   omega0_abs_threshold: 5.0e-5
   center_error_mad_threshold: 4.0
+  omega_units_scale: 1.0e-3
 
 tracking:
   length_scale_km: 50.0
@@ -45,27 +37,13 @@ tracking:
   radius_threshold: 1.0
   lookback_days: 4
 
-processing:
-  min_duration_days: 21
-  ar_max: 5.0
-  rc_max_km: 300.0
-  rc_r_ratio_max: 1.75
-  omega_abs_max: 5.0e-5
-  psi0_abs_max: 300.0
-  mean_radius_min_km: 15.0
-  max_outer_gap_days: null
-  date_origin: "1990-01-01"
-  file_start_fnumber: 1461
-  file_stride_days: 30
-  file_day_offset: 1462
-
 vertical_profiles:
   transect_radius_km: 30.0
   max_jump_km: 100.0
   rho_max_km: 200.0
   rho_min_km: 30.0
   max_depth_levels: null
-  target_depths: null # preset is z_r[150,150,1:] i.e., center of model
+  target_depths: null
 
 tilt:
   min_profile_depth_count: 3
