@@ -64,6 +64,7 @@ vertical_profiles:
   max_jump_km: 100.0
   rho_max_km: 200.0
   rho_min_km: 30.0
+  local_limit_factor: 2.0
   max_depth_levels: null
   target_depths: null
 
