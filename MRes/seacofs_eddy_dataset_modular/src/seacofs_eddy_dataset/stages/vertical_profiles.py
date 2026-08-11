@@ -11,7 +11,7 @@ from seacofs_eddy_dataset.core.doppio import find_directional_radii, nearest_ij,
 from seacofs_eddy_dataset.core.esp import load_doppio_functions
 from seacofs_eddy_dataset.core.grid import fnumber_from_outer_avg, read_reference_grid
 from seacofs_eddy_dataset.core.velocity import rotate_uv
-from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths
+from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths, prepare_3d_velocity_field
 from seacofs_eddy_dataset.io import read_partitions, write_partition
 from seacofs_eddy_dataset.stages.detection import find_model_files, reference_grid_path
 
@@ -201,8 +201,8 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
             df_day = df_file.loc[df_file["Day"].eq(day)]
             if df_day.empty:
                 continue
-            u3d = np.transpose(dataset["u_eastward"][t, :, :, :], (2, 1, 0))
-            v3d = np.transpose(dataset["v_northward"][t, :, :, :], (2, 1, 0))
+            u3d = prepare_3d_velocity_field(dataset["u_eastward"][t, :, :, :])
+            v3d = prepare_3d_velocity_field(dataset["v_northward"][t, :, :, :])
             u_depth = interp_3d_to_reference_depths(u3d, z_r, target_depths)
             v_depth = interp_3d_to_reference_depths(v3d, z_r, target_depths)
 
