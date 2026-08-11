@@ -90,6 +90,7 @@ def _fit_depth(
     radius_km: float,
     rho_max: float,
     rho_min: float,
+    out_core_fac: float,
     max_jump_km: float,
     omega_scale: float,
     local_limit_factor: float,
@@ -140,7 +141,7 @@ def _fit_depth(
         if not np.isfinite(radius):
             return None
 
-        rho_limit = max(min(radius * 1.75, rho_max), rho_min)
+        rho_limit = max(min(radius * out_core_fac, rho_max), rho_min)
         local_limit = rho_limit * local_limit_factor
         local = (grid.X_grid >= xc - local_limit) & (grid.X_grid <= xc + local_limit)
         local &= (grid.Y_grid >= yc - local_limit) & (grid.Y_grid <= yc + local_limit)
@@ -195,7 +196,6 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
 
     settings = config.raw.get("vertical_profiles", {})
     omega_scale = float(config.raw.get("surface_fit", {}).get("omega_units_scale", 1e-3))
-    local_limit_factor = float(settings.get("local_limit_factor", 2.0))
     grid = read_reference_grid(reference_grid_path(config))
     doppio, out_core_param_fit = load_doppio_functions(config)
     z_r_path = Path(config.raw["paths"]["z_r"]).expanduser()
@@ -255,9 +255,10 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
                         radius_km=float(settings.get("transect_radius_km", 30.0)),
                         rho_max=float(settings.get("rho_max_km", 200.0)),
                         rho_min=float(settings.get("rho_min_km", 30.0)),
+                        out_core_fac=float(settings.get("out_core_fac", 1.75)),
                         max_jump_km=float(settings.get("max_jump_km", 100.0)),
                         omega_scale=omega_scale,
-                        local_limit_factor=local_limit_factor,
+                        local_limit_factor=float(settings.get("local_limit_factor", 3.0)),
                     )
                     if fitted is None:
                         break

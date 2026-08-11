@@ -40,6 +40,8 @@ surface_fit:
   # Threshold is applied to the scaled surface_eddies Omega0 values.
   omega0_abs_threshold: 5.0e-5
   center_error_mad_threshold: 4.0
+  local_limit_factor: 3
+  out_core_fac: 1.75
 
 tracking:
   length_scale_km: 50.0
@@ -66,6 +68,8 @@ vertical_profiles:
   max_jump_km: 100.0
   rho_max_km: 200.0
   rho_min_km: 30.0
+  local_limit_factor: 3
+  out_core_fac: 1.75
   max_depth_levels: null
   target_depths: null # preset is z_r[150,150,1:] i.e., center of model
 

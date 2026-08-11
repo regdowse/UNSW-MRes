@@ -156,7 +156,9 @@ def _fit_detection_row(
     radius_km: float,
     rho_max: float,
     rho_min: float,
+    out_core_fac: float,
     omega_scale: float,
+    local_limit_factor: float,
     vertical_check: dict | None = None,
 ) -> dict:
     try:
@@ -180,8 +182,8 @@ def _fit_detection_row(
             return _bad_row(row, fnumber)
         radius = float(finite_radii.mean())
 
-        rho_limit = max(min(radius * 1.75, rho_max), rho_min)  #radius * 1.75
-        local_limit = rho_limit * 2
+        rho_limit = max(min(radius * out_core_fac, rho_max), rho_min) 
+        local_limit = rho_limit * local_limit_factor
         local = (grid.X_grid >= xc - local_limit) & (grid.X_grid <= xc + local_limit)
         local &= (grid.Y_grid >= yc - local_limit) & (grid.Y_grid <= yc + local_limit)
         if int(local.sum()) < 10:
@@ -252,6 +254,8 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
     settings = config.raw.get("surface_fit", {})
     rho_max = float(settings.get("rho_max_km", 200.0))
     rho_min = float(settings.get("rho_min_km", 30.0))
+    local_limit_factor = float(settings.get("local_limit_factor", 3.0))
+    out_core_fac = float(settings.get("out_core_fac", 1.75))
     radius_km = float(settings.get("transect_radius_km", 30.0))
     omega_scale = float(settings.get("omega_units_scale", 1e-3))
     require_vertical_profile = bool(settings.get("require_vertical_profile", True))
@@ -296,7 +300,11 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
                     doppio,
                     out_core_param_fit,
                     radius_km,
+                    rho_max,
+                    rho_min,
+                    out_core_fac,
                     omega_scale,
+                    local_limit_factor,
                     vertical_check,
                 )
                 for row in day_detections.itertuples(index=False)
