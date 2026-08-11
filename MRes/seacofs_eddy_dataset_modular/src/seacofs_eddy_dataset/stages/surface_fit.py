@@ -273,8 +273,20 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
             u_rot, v_rot = rotate_uv(u, v, grid.angle)
             vertical_check = None
             if require_vertical_profile:
-                u3d = prepare_3d_velocity_field(dataset["u_eastward"][t, :, :, :])
-                v3d = prepare_3d_velocity_field(dataset["v_northward"][t, :, :, :])
+                # u3d = prepare_3d_velocity_field(dataset["u_eastward"][t, :, :, :])
+                # v3d = prepare_3d_velocity_field(dataset["v_northward"][t, :, :, :])
+
+                u3d = np.flip(
+                    dataset['u_eastward'][t].T.astype(float),
+                    axis=2
+                )
+                v3d = np.flip(
+                    dataset['v_northward'][t].T.astype(float),
+                    axis=2
+                )
+                u3d[np.abs(u3d) > 1e30] = np.nan
+                v3d[np.abs(v3d) > 1e30] = np.nan
+                
                 vertical_check = {
                     "u_depth": interp_3d_to_reference_depths(u3d, z_r, target_depths),
                     "v_depth": interp_3d_to_reference_depths(v3d, z_r, target_depths),

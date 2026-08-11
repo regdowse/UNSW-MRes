@@ -4,13 +4,6 @@ import numpy as np
 import pandas as pd
 
 
-def prepare_3d_velocity_field(var) -> np.ndarray:
-    """Match the 3D velocity orientation used by the original notebooks."""
-    values = np.flip(np.asarray(var).T.astype(float), axis=2)
-    values[np.abs(values) > 1e30] = np.nan
-    return values
-
-
 def interp_3d_to_reference_depths(var3d, z3d, target_depths) -> np.ndarray:
     target_depths = np.asarray(target_depths)
     out = np.full(var3d.shape[:2] + (target_depths.size,), np.nan)
@@ -18,10 +11,11 @@ def interp_3d_to_reference_depths(var3d, z3d, target_depths) -> np.ndarray:
         for j in range(var3d.shape[1]):
             z = np.abs(np.asarray(z3d[i, j, :], dtype=float))
             values = np.asarray(var3d[i, j, :], dtype=float)
+            order = np.argsort(z)
             out[i, j, :] = np.interp(
                 target_depths,
-                z,
-                values,
+                z[order],
+                values[order],
                 left=np.nan,
                 right=np.nan,
             )
