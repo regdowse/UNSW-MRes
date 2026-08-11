@@ -181,7 +181,7 @@ def _fit_detection_row(
         radius = float(finite_radii.mean())
 
         rho_limit = max(min(radius * 1.75, rho_max), rho_min)  #radius * 1.75
-        local_limit = rho_limit * 2
+        local_limit = rho_limit * 3
         local = (grid.X_grid >= xc - local_limit) & (grid.X_grid <= xc + local_limit)
         local &= (grid.Y_grid >= yc - local_limit) & (grid.Y_grid <= yc + local_limit)
         if int(local.sum()) < 10:
@@ -250,6 +250,8 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
     grid = read_reference_grid(reference_grid_path(config))
     doppio, out_core_param_fit = load_doppio_functions(config)
     settings = config.raw.get("surface_fit", {})
+    rho_max = float(settings.get("rho_max_km", 200.0))
+    rho_min = float(settings.get("rho_min_km", 30.0))
     radius_km = float(settings.get("transect_radius_km", 30.0))
     omega_scale = float(settings.get("omega_units_scale", 1e-3))
     require_vertical_profile = bool(settings.get("require_vertical_profile", True))

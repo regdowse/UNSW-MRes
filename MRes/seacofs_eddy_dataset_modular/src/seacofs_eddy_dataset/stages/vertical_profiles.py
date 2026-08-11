@@ -124,7 +124,7 @@ def _fit_depth(
             return None
 
         rho_limit = max(min(radius * 1.75, rho_max), rho_min)   #min(radius * 1.75, rho_max)
-        local_limit = rho_limit * 2
+        local_limit = rho_limit * 3
         local = (grid.X_grid >= xc - local_limit) & (grid.X_grid <= xc + local_limit)
         local &= (grid.Y_grid >= yc - local_limit) & (grid.Y_grid <= yc + local_limit)
         if int(local.sum()) < 10:
