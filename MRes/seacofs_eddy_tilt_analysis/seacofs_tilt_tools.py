@@ -19,16 +19,22 @@ from scipy.stats import linregress
 from scipy.stats import binned_statistic_2d
 
 DEFAULT_EDDY_PATH = Path(
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-    "DOPPIO_SEACOFS_26yr_50m_vert_check/df_eddies_50m_vert_checked_processed.pkl"
+    # "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
+    # "DOPPIO_SEACOFS_26yr_50m_vert_check/df_eddies_50m_vert_checked_processed.pkl"
+    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/"
+    "processed/eddy_dataset_processed.parquet"
 )
 DEFAULT_TILT_PATH = Path(
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-    "DOPPIO_SEACOFS_26yr_50m_vert_check/df_tilt_vert_checked.pkl"
+    # "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
+    # "DOPPIO_SEACOFS_26yr_50m_vert_check/df_tilt_vert_checked.pkl"
+    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/"
+    "tilt/tilt_dataset.parquet"
 )
 DEFAULT_VERT_PATH = Path(
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-    "DOPPIO_SEACOFS_26yr_50m_vert_check/dic_vert_doppio_50m_vert_checked.pkl"
+    # "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
+    # "DOPPIO_SEACOFS_26yr_50m_vert_check/dic_vert_doppio_50m_vert_checked.pkl"
+    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/"
+    "vertical_profiles_confirmed/profiles.parquet"
 )
 DEFAULT_OLD_EDDY_PATH = Path(
     "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/df_eddies_processed.pkl"
@@ -37,7 +43,7 @@ DEFAULT_BETA_EDDY_PATH = Path(
     "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/df_eddies_beta_data_w.pkl"
 )
 DEFAULT_GRID_PATH = Path("/srv/scratch/z3533156/26year_BRAN2020/outer_avg_01461.nc")
-DEFAULT_ZR_PATH = Path("/srv/scratch/z5297792/z_r.npy")
+DEFAULT_ZR_PATH = Path("/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/z_r.npy")
 
 KM_PER_DAY_TO_M_PER_S = 1000.0 / 86400.0
 LEVELS_LAT = [-40, -35, -30, -25]
