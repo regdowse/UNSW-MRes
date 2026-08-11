@@ -11,7 +11,7 @@ from seacofs_eddy_dataset.core.doppio import bad_doppio_row, find_directional_ra
 from seacofs_eddy_dataset.core.esp import load_doppio_functions
 from seacofs_eddy_dataset.core.grid import fnumber_from_outer_avg, read_reference_grid
 from seacofs_eddy_dataset.core.velocity import rotate_uv
-from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths #prepare_3d_velocity_field
+from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths
 from seacofs_eddy_dataset.io import partition_path, write_partition
 from seacofs_eddy_dataset.stages.detection import find_model_files, reference_grid_path
 
@@ -154,6 +154,8 @@ def _fit_detection_row(
     doppio,
     out_core_param_fit,
     radius_km: float,
+    rho_max: float,
+    rho_min: float,
     omega_scale: float,
     vertical_check: dict | None = None,
 ) -> dict:
@@ -178,9 +180,10 @@ def _fit_detection_row(
             return _bad_row(row, fnumber)
         radius = float(finite_radii.mean())
 
-        rho_limit = radius * 1.5
-        local = (grid.X_grid >= xc - rho_limit) & (grid.X_grid <= xc + rho_limit)
-        local &= (grid.Y_grid >= yc - rho_limit) & (grid.Y_grid <= yc + rho_limit)
+        rho_limit = max(min(radius * 1.75, rho_max), rho_min)  #radius * 1.75
+        local_limit = rho_limit * 2
+        local = (grid.X_grid >= xc - local_limit) & (grid.X_grid <= xc + local_limit)
+        local &= (grid.Y_grid >= yc - local_limit) & (grid.Y_grid <= yc + local_limit)
         if int(local.sum()) < 10:
             return _bad_row(row, fnumber)
 
@@ -270,15 +273,13 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
             u_rot, v_rot = rotate_uv(u, v, grid.angle)
             vertical_check = None
             if require_vertical_profile:
-                # u3d = prepare_3d_velocity_field(dataset["u_eastward"][t, :, :, :])
-                # v3d = prepare_3d_velocity_field(dataset["v_northward"][t, :, :, :])
 
                 u3d = np.flip(dataset["u_eastward"][t].T.astype(float), axis=2)
                 v3d = np.flip(dataset["v_northward"][t].T.astype(float), axis=2)
 
                 vertical_check = {
-                    "u_depth": interp_3d_to_reference_depths(u3d_rot, z_r, target_depths),
-                    "v_depth": interp_3d_to_reference_depths(v3d_rot, z_r, target_depths),
+                    "u_depth": interp_3d_to_reference_depths(u3d, z_r, target_depths),
+                    "v_depth": interp_3d_to_reference_depths(v3d, z_r, target_depths),
                     "target_depths": target_depths,
                     "max_jump_km": float(settings.get("vertical_check_max_jump_km", 100.0)),
                     "depth_threshold_m": float(settings.get("vertical_check_depth_m", 50.0)),

@@ -27,6 +27,8 @@ nencioli:
 
 surface_fit:
   transect_radius_km: 30.0
+  rho_max_km: 200.0
+  rho_min_km: 30.0
   # Reject surface candidates unless the fitted DOPPIO centre can be followed
   # vertically to at least this depth.
   require_vertical_profile: true
