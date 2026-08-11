@@ -11,7 +11,7 @@ from seacofs_eddy_dataset.core.doppio import bad_doppio_row, find_directional_ra
 from seacofs_eddy_dataset.core.esp import load_doppio_functions
 from seacofs_eddy_dataset.core.grid import fnumber_from_outer_avg, read_reference_grid
 from seacofs_eddy_dataset.core.velocity import rotate_uv
-from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths, prepare_3d_velocity_field
+from seacofs_eddy_dataset.core.vertical import interp_3d_to_reference_depths #prepare_3d_velocity_field
 from seacofs_eddy_dataset.io import partition_path, write_partition
 from seacofs_eddy_dataset.stages.detection import find_model_files, reference_grid_path
 
@@ -70,7 +70,6 @@ def _bad_row(row, fnumber: int) -> dict:
 def _target_depths_for_surface_check(z_r, settings: dict) -> np.ndarray: # check this
     configured_depths = settings.get("vertical_check_target_depths")
     if configured_depths is None:
-        # target_depths = np.nanmedian(np.abs(z_r), axis=(0, 1))
         target_depths = np.abs(z_r[150,150,1:])
     else:
         target_depths = np.asarray(configured_depths, dtype=float)
@@ -255,8 +254,6 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
     target_depths = None
     if require_vertical_profile:
         z_r = _load_z_r(config)
-        # if z_r.shape[:2] != grid.X_grid.shape and z_r.shape[-2:] == grid.X_grid.shape:
-        #     z_r = np.moveaxis(z_r, 0, -1)
         target_depths = _target_depths_for_surface_check(z_r, settings)
         if target_depths.size == 0:
             raise ValueError("No valid surface_fit vertical-check target depths found")
@@ -284,12 +281,11 @@ def fit_surface_file(path: Path, config: PipelineConfig) -> pd.DataFrame:
                     dataset['v_northward'][t].T.astype(float),
                     axis=2
                 )
-                u3d[np.abs(u3d) > 1e30] = np.nan
-                v3d[np.abs(v3d) > 1e30] = np.nan
+                u3d_rot, v3d_rot = rotate_uv(u3d, v3d, grid.angle)
                 
                 vertical_check = {
-                    "u_depth": interp_3d_to_reference_depths(u3d, z_r, target_depths),
-                    "v_depth": interp_3d_to_reference_depths(v3d, z_r, target_depths),
+                    "u_depth": interp_3d_to_reference_depths(u3d_rot, z_r, target_depths),
+                    "v_depth": interp_3d_to_reference_depths(v3d_rot, z_r, target_depths),
                     "target_depths": target_depths,
                     "max_jump_km": float(settings.get("vertical_check_max_jump_km", 100.0)),
                     "depth_threshold_m": float(settings.get("vertical_check_depth_m", 50.0)),
