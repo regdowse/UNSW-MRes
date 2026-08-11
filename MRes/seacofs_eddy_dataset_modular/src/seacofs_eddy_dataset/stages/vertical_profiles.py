@@ -49,10 +49,6 @@ def vertical_output_path(path: Path, config: PipelineConfig) -> Path:
     return config.output_root / "vertical_profiles" / f"fnumber={fnumber_from_outer_avg(path):05}.parquet"
 
 
-def _q_from_row(row) -> np.ndarray:
-    return np.array([[row.q11, row.q12], [row.q12, row.q22]], dtype=float)
-
-
 def _surface_row(row, fnumber: int) -> dict:
     return {
         "Eddy": int(row.Eddy),
@@ -81,6 +77,11 @@ def _fit_depth(
     fnumber: int,
     depth_idx: int,
     depth: float,
+    xc_prev: float,
+    yc_prev: float,
+    ic: int,
+    jc: int,
+    w_surface: float,
     u2d,
     v2d,
     grid,
@@ -90,28 +91,44 @@ def _fit_depth(
     rho_max: float,
     rho_min: float,
     max_jump_km: float,
+    omega_scale: float,
+    local_limit_factor: float,
 ) -> dict | None:
-    q_prev = _q_from_row(row)
     try:
-        ic, jc = nearest_ij(float(row.xc), float(row.yc), grid.X_grid, grid.Y_grid)
+        if (
+            (xc_prev < radius_km)
+            or (xc_prev > grid.X_grid.max() - radius_km)
+            or (yc_prev < radius_km)
+            or (yc_prev > grid.Y_grid.max() - radius_km)
+        ):
+            return None
+
         x1, y1, x2, y2, ii, jj = transect_indexer(ic, jc, grid.X_grid, grid.Y_grid, r=radius_km)
         if len(ii) < 3 or len(jj) < 3:
             return None
+        u1 = u2d[ii, jc]
+        v1 = v2d[ii, jc]
+        u2 = u2d[ic, jj]
+        v2 = v2d[ic, jj]
+        if any(np.all(np.isnan(values)) for values in [u1, v1, u2, v2]):
+            return None
+
         xc, yc, w, q, omega0 = doppio(
             x1,
             y1,
-            u2d[ii, jc],
-            v2d[ii, jc],
+            u1,
+            v1,
             x2,
             y2,
-            u2d[ic, jj],
-            v2d[ic, jj],
+            u2,
+            v2,
         )
-        if np.hypot(xc - row.xc, yc - row.yc) > max_jump_km:
+        if np.hypot(xc - xc_prev, yc - yc_prev) > max_jump_km:
             return None
-        if np.sign(w) != np.sign(row.w):
+        if np.sign(w) != np.sign(w_surface):
             return None
 
+        ic_next, jc_next = nearest_ij(xc, yc, grid.X_grid, grid.Y_grid)
         radii = find_directional_radii(u2d, v2d, grid.X_grid, grid.Y_grid, xc, yc, q)
         radius_values = np.array(
             [radii["up"], radii["right"], radii["down"], radii["left"]],
@@ -120,11 +137,11 @@ def _fit_depth(
         if np.all(np.isnan(radius_values)):
             return None
         radius = np.nanmean(radius_values)
-        if not np.isfinite(radius) or radius < rho_min:
+        if not np.isfinite(radius):
             return None
 
-        rho_limit = max(min(radius * 1.75, rho_max), rho_min)   #min(radius * 1.75, rho_max)
-        local_limit = rho_limit * 3
+        rho_limit = max(min(radius * 1.75, rho_max), rho_min)
+        local_limit = rho_limit * local_limit_factor
         local = (grid.X_grid >= xc - local_limit) & (grid.X_grid <= xc + local_limit)
         local &= (grid.Y_grid >= yc - local_limit) & (grid.Y_grid <= yc + local_limit)
         if int(local.sum()) < 10:
@@ -134,7 +151,7 @@ def _fit_depth(
         yloc = grid.Y_grid[local]
         uloc = u2d[local]
         vloc = v2d[local]
-        rho = np.sqrt(np.maximum(q_prev[0, 0] * (xloc - xc) ** 2 + 2 * q_prev[0, 1] * (xloc - xc) * (yloc - yc) + q_prev[1, 1] * (yloc - yc) ** 2, 0))
+        rho = np.sqrt(np.maximum(q[0, 0] * (xloc - xc) ** 2 + 2 * q[0, 1] * (xloc - xc) * (yloc - yc) + q[1, 1] * (yloc - yc) ** 2, 0))
         mask = np.isfinite(rho) & (rho <= rho_limit)
         if int(mask.sum()) < 10:
             return None
@@ -147,17 +164,17 @@ def _fit_depth(
         "Day": int(row.Day),
         "fnumber": fnumber,
         "Depth": float(depth),
-        "z": int(depth_idx),
+        "z": int(depth_idx + 1),
         "xc": float(xc),
         "yc": float(yc),
-        "ic": int(ic),
-        "jc": int(jc),
-        "w": float(w),
+        "ic": int(ic_next),
+        "jc": int(jc_next),
+        "w": float(w) * omega_scale,
         "q11": float(q[0, 0]),
         "q12": float(q[0, 1]),
         "q22": float(q[1, 1]),
-        "Omega0": float(omega0),
-        "Omega": float(omega),
+        "Omega0": float(omega0) * omega_scale,
+        "Omega": float(omega) * omega_scale,
         "Rc": float(rc),
         "psi0": float(psi0),
         "R": float(radius),
@@ -177,6 +194,8 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
         return pd.DataFrame(columns=PROFILE_COLUMNS)
 
     settings = config.raw.get("vertical_profiles", {})
+    omega_scale = float(config.raw.get("surface_fit", {}).get("omega_units_scale", 1e-3))
+    local_limit_factor = float(settings.get("local_limit_factor", 2.0))
     grid = read_reference_grid(reference_grid_path(config))
     doppio, out_core_param_fit = load_doppio_functions(config)
     z_r_path = Path(config.raw["paths"]["z_r"]).expanduser()
@@ -201,12 +220,19 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
                 continue
             u3d = np.flip(dataset["u_eastward"][t].T.astype(float), axis=2)
             v3d = np.flip(dataset["v_northward"][t].T.astype(float), axis=2)
-            
+            u3d[np.abs(u3d) > 1e30] = np.nan
+            v3d[np.abs(v3d) > 1e30] = np.nan
+
             u_depth = interp_3d_to_reference_depths(u3d, z_r, target_depths)
             v_depth = interp_3d_to_reference_depths(v3d, z_r, target_depths)
 
             for row in df_day.itertuples(index=False):
                 rows.append(_surface_row(row, fnumber))
+                xc_prev = float(row.xc)
+                yc_prev = float(row.yc)
+                ic = int(row.ic)
+                jc = int(row.jc)
+                w_surface = float(row.w)
                 for depth_idx, depth in enumerate(target_depths):
                     if depth <= 0:
                         continue
@@ -216,6 +242,11 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
                         fnumber,
                         depth_idx,
                         depth,
+                        xc_prev,
+                        yc_prev,
+                        ic,
+                        jc,
+                        w_surface,
                         u2d,
                         v2d,
                         grid,
@@ -225,10 +256,16 @@ def compute_profiles_for_file(path: Path, config: PipelineConfig) -> pd.DataFram
                         rho_max=float(settings.get("rho_max_km", 200.0)),
                         rho_min=float(settings.get("rho_min_km", 30.0)),
                         max_jump_km=float(settings.get("max_jump_km", 100.0)),
+                        omega_scale=omega_scale,
+                        local_limit_factor=local_limit_factor,
                     )
                     if fitted is None:
                         break
                     rows.append(fitted)
+                    xc_prev = fitted["xc"]
+                    yc_prev = fitted["yc"]
+                    ic = fitted["ic"]
+                    jc = fitted["jc"]
 
     return pd.DataFrame(rows, columns=PROFILE_COLUMNS)
 
