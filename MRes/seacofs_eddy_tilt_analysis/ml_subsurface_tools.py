@@ -27,7 +27,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-BASE_NUMERIC_FEATURES = ["lat", "w", "Omega", "Rc", "AR", "norm_time"]
+BASE_NUMERIC_FEATURES = ["lat", "beta", "f", "h", "w", "Omega", "Rc", "AR", "norm_time"]
 PV_VECTOR_FEATURES = ["PV_grad_mag", "PV_grad_east", "PV_grad_north"]
 NUMERIC_FEATURES = BASE_NUMERIC_FEATURES + PV_VECTOR_FEATURES
 FEATURES = NUMERIC_FEATURES
