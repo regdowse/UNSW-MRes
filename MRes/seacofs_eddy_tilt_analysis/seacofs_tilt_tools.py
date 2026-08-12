@@ -114,24 +114,6 @@ def load_grid(grid_path: Path | str = DEFAULT_GRID_PATH, z_r_path: Path | str = 
     return Grid(lon_rho, lat_rho, mask_rho, h, f, angle, z_r, x_grid, y_grid, X_grid, Y_grid)
 
 
-# def load_tilt_tables(paths: Paths = Paths(), *, add_regions: bool = False, grid: Grid | None = None):
-#     """Load eddy and tilt tables, then merge ``TiltDis`` and ``TiltDir``."""
-
-#     df_eddies = pd.read_pickle(paths.eddies)
-#     df_tilt = pd.read_pickle(paths.tilt)
-#     df_eddies = df_eddies.merge(
-#         df_tilt[["Eddy", "Day", "TiltDis", "TiltDir"]],
-#         how="left",
-#         on=["Eddy", "Day"],
-#     )
-
-#     if add_regions:
-#         if grid is None:
-#             raise ValueError("Pass grid when add_regions=True.")
-#         df_eddies = add_region_labels(df_eddies, grid)
-
-#     return df_eddies, df_tilt
-
 def read_table(path: Path | str):
     path = Path(path)
     if path.suffix.lower() == ".parquet":
@@ -162,7 +144,7 @@ def load_tilt_tables(paths: Paths = Paths(), *, add_regions: bool = False, grid:
 
     return df_eddies, df_tilt
 
-def load_vert(paths: Paths = Paths(), dic_form=False):
+def load_vert(paths: Paths = Paths(), dic_form: bool = False):
     vertical = read_table(paths.vert)
     if not dic_form:
         return vertical
