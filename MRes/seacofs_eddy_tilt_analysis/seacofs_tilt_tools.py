@@ -18,30 +18,9 @@ from scipy.spatial import cKDTree
 from scipy.stats import linregress
 from scipy.stats import binned_statistic_2d
 
-DEFAULT_EDDY_PATH = Path(
-    # "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-    # "DOPPIO_SEACOFS_26yr_50m_vert_check/df_eddies_50m_vert_checked_processed.pkl"
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/"
-    "processed/eddy_dataset_processed.parquet"
-)
-DEFAULT_TILT_PATH = Path(
-    # "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-    # "DOPPIO_SEACOFS_26yr_50m_vert_check/df_tilt_vert_checked.pkl"
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/"
-    "tilt/tilt_dataset.parquet"
-)
-DEFAULT_VERT_PATH = Path(
-    # "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-    # "DOPPIO_SEACOFS_26yr_50m_vert_check/dic_vert_doppio_50m_vert_checked.pkl"
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/"
-    "vertical_profiles_confirmed/profiles.parquet"
-)
-DEFAULT_OLD_EDDY_PATH = Path(
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/df_eddies_processed.pkl"
-)
-DEFAULT_BETA_EDDY_PATH = Path(
-    "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/df_eddies_beta_data_w.pkl"
-)
+DEFAULT_EDDY_PATH = Path("/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/processed/eddy_dataset_processed.parquet")
+DEFAULT_TILT_PATH = Path("/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/tilt/tilt_dataset.parquet")
+DEFAULT_VERT_PATH = Path("/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/vertical_profiles_confirmed/profiles.parquet")
 DEFAULT_GRID_PATH = Path("/srv/scratch/z3533156/26year_BRAN2020/outer_avg_01461.nc")
 DEFAULT_ZR_PATH = Path("/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/z_r.npy")
 
@@ -57,8 +36,8 @@ class Paths:
     eddies: Path = DEFAULT_EDDY_PATH
     tilt: Path = DEFAULT_TILT_PATH
     vertical_dictionary: Path = DEFAULT_VERT_PATH
-    old_eddies: Path = DEFAULT_OLD_EDDY_PATH
-    beta_eddies: Path = DEFAULT_BETA_EDDY_PATH
+    # old_eddies: Path = DEFAULT_OLD_EDDY_PATH
+    # beta_eddies: Path = DEFAULT_BETA_EDDY_PATH
     grid: Path = DEFAULT_GRID_PATH
     z_r: Path = DEFAULT_ZR_PATH
 
@@ -137,11 +116,41 @@ def load_grid(grid_path: Path | str = DEFAULT_GRID_PATH, z_r_path: Path | str = 
     return Grid(lon_rho, lat_rho, mask_rho, h, f, angle, z_r, x_grid, y_grid, X_grid, Y_grid)
 
 
+# def load_tilt_tables(paths: Paths = Paths(), *, add_regions: bool = False, grid: Grid | None = None):
+#     """Load eddy and tilt tables, then merge ``TiltDis`` and ``TiltDir``."""
+
+#     df_eddies = pd.read_pickle(paths.eddies)
+#     df_tilt = pd.read_pickle(paths.tilt)
+#     df_eddies = df_eddies.merge(
+#         df_tilt[["Eddy", "Day", "TiltDis", "TiltDir"]],
+#         how="left",
+#         on=["Eddy", "Day"],
+#     )
+
+#     if add_regions:
+#         if grid is None:
+#             raise ValueError("Pass grid when add_regions=True.")
+#         df_eddies = add_region_labels(df_eddies, grid)
+
+#     return df_eddies, df_tilt
+
+def read_table(path: Path | str):
+    path = Path(path)
+    if path.suffix.lower() == ".parquet":
+        return pd.read_parquet(path)
+    if path.suffix.lower() in {".pkl", ".pickle"}:
+        return pd.read_pickle(path)
+    try:
+        return pd.read_parquet(path)
+    except Exception:
+        return pd.read_pickle(path)
+
+
 def load_tilt_tables(paths: Paths = Paths(), *, add_regions: bool = False, grid: Grid | None = None):
     """Load eddy and tilt tables, then merge ``TiltDis`` and ``TiltDir``."""
 
-    df_eddies = pd.read_pickle(paths.eddies)
-    df_tilt = pd.read_pickle(paths.tilt)
+    df_eddies = read_table(paths.eddies)
+    df_tilt = read_table(paths.tilt)
     df_eddies = df_eddies.merge(
         df_tilt[["Eddy", "Day", "TiltDis", "TiltDir"]],
         how="left",
@@ -156,8 +165,20 @@ def load_tilt_tables(paths: Paths = Paths(), *, add_regions: bool = False, grid:
     return df_eddies, df_tilt
 
 
+# def load_vertical_dictionary(paths: Paths = Paths()):
+#     return pd.read_pickle(paths.vertical_dictionary)
+
 def load_vertical_dictionary(paths: Paths = Paths()):
-    return pd.read_pickle(paths.vertical_dictionary)
+    vertical = read_table(paths.vertical_dictionary)
+    if isinstance(vertical, dict):
+        return vertical
+
+    out = {}
+    if vertical.empty:
+        return out
+    for (eddy, day), profile in vertical.groupby(["Eddy", "Day"], sort=False):
+        out.setdefault(f"Eddy{int(eddy)}", {})[f"Day{int(day)}"] = profile.copy().reset_index(drop=True)
+    return out
 
 
 def add_region_labels(df: pd.DataFrame, grid: Grid) -> pd.DataFrame:
