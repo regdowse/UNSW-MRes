@@ -27,7 +27,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
-NUMERIC_FEATURES = ["lat", "w", "Omega", "Rc", "AR", "Age", "PV_gradient"]
+BASE_NUMERIC_FEATURES = ["lat", "w", "Omega", "Rc", "AR", "Age"]
+PV_VECTOR_FEATURES = ["PV_grad_mag", "PV_grad_east", "PV_grad_north"]
+NUMERIC_FEATURES = BASE_NUMERIC_FEATURES + PV_VECTOR_FEATURES
 CATEGORICAL_FEATURES = ["Cyc"]
 FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 TARGET_COMPONENTS = ["TiltEast", "TiltNorth"]
@@ -81,17 +83,30 @@ def prepare_modelling_table(df: pd.DataFrame) -> pd.DataFrame:
 
     ``TiltDir`` is assumed to be a compass bearing: 0 degrees is north and
     90 degrees is east, matching ``seacofs_tilt_tools.bearing_from_xy``.
-    ``PV_gradient`` should be the magnitude produced from the core-mean PV
-    calculation (``PV_grad_mag`` in ``seacofs_tilt_tools``).
+    The PV-gradient bearing is encoded as eastward and northward vector
+    components. This retains both ``PV_grad_mag`` and the circular information
+    in ``PV_grad_theta`` without exposing a discontinuous 0--360 degree value
+    to the regressors.
     """
 
-    required = {"Eddy", "TiltDis", "TiltDir", *FEATURES}
+    required = {
+        "Eddy",
+        "Cyc",
+        "TiltDis",
+        "TiltDir",
+        "PV_grad_mag",
+        "PV_grad_theta",
+        *BASE_NUMERIC_FEATURES,
+    }
     missing = sorted(required.difference(df.columns))
     if missing:
         raise KeyError(f"Missing required modelling columns: {missing}")
 
     out = df.copy()
     out["Cyc"] = out["Cyc"].astype("string")
+    pv_theta = np.deg2rad(out["PV_grad_theta"].astype(float))
+    out["PV_grad_east"] = out["PV_grad_mag"] * np.sin(pv_theta)
+    out["PV_grad_north"] = out["PV_grad_mag"] * np.cos(pv_theta)
     theta = np.deg2rad(out["TiltDir"].astype(float))
     out["TiltEast"] = out["TiltDis"] * np.sin(theta)
     out["TiltNorth"] = out["TiltDis"] * np.cos(theta)
