@@ -24,14 +24,13 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 
 
-BASE_NUMERIC_FEATURES = ["lat", "w", "Omega", "Rc", "AR", "Age"]
+BASE_NUMERIC_FEATURES = ["lat", "w", "Omega", "Rc", "AR", "norm_time"]
 PV_VECTOR_FEATURES = ["PV_grad_mag", "PV_grad_east", "PV_grad_north"]
 NUMERIC_FEATURES = BASE_NUMERIC_FEATURES + PV_VECTOR_FEATURES
-CATEGORICAL_FEATURES = ["Cyc"]
-FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+FEATURES = NUMERIC_FEATURES
 TARGET_COMPONENTS = ["TiltEast", "TiltNorth"]
 
 
@@ -91,19 +90,27 @@ def prepare_modelling_table(df: pd.DataFrame) -> pd.DataFrame:
 
     required = {
         "Eddy",
+        "Day",
         "Cyc",
         "TiltDis",
         "TiltDir",
         "PV_grad_mag",
         "PV_grad_theta",
-        *BASE_NUMERIC_FEATURES,
+        "lat",
+        "w",
+        "Omega",
+        "Rc",
+        "AR",
     }
     missing = sorted(required.difference(df.columns))
     if missing:
         raise KeyError(f"Missing required modelling columns: {missing}")
 
-    out = df.copy()
+    out = df.sort_values(["Eddy", "Day"]).copy()
     out["Cyc"] = out["Cyc"].astype("string")
+    out["Day_idx"] = out.groupby("Eddy").cumcount()
+    last_day_idx = out.groupby("Eddy")["Day_idx"].transform("max")
+    out["norm_time"] = np.where(last_day_idx > 0, out["Day_idx"] / last_day_idx, 0.0)
     pv_theta = np.deg2rad(out["PV_grad_theta"].astype(float))
     out["PV_grad_east"] = out["PV_grad_mag"] * np.sin(pv_theta)
     out["PV_grad_north"] = out["PV_grad_mag"] * np.cos(pv_theta)
@@ -147,15 +154,6 @@ def grouped_train_test_split(
     )
 
 
-def _one_hot_encoder() -> OneHotEncoder:
-    """Create a dense encoder across old and new scikit-learn versions."""
-
-    try:
-        return OneHotEncoder(handle_unknown="ignore", sparse_output=False)
-    except TypeError:  # scikit-learn < 1.2
-        return OneHotEncoder(handle_unknown="ignore", sparse=False)
-
-
 def make_preprocessor(*, scale_numeric: bool) -> ColumnTransformer:
     """Build leakage-safe preprocessing fitted only within each model fit."""
 
@@ -163,17 +161,8 @@ def make_preprocessor(*, scale_numeric: bool) -> ColumnTransformer:
     if scale_numeric:
         numeric_steps.append(("scaler", StandardScaler()))
     numeric = Pipeline(numeric_steps)
-    categorical = Pipeline(
-        [
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", _one_hot_encoder()),
-        ]
-    )
     return ColumnTransformer(
-        [
-            ("numeric", numeric, NUMERIC_FEATURES),
-            ("categorical", categorical, CATEGORICAL_FEATURES),
-        ],
+        [("numeric", numeric, NUMERIC_FEATURES)],
         verbose_feature_names_out=False,
     )
 
