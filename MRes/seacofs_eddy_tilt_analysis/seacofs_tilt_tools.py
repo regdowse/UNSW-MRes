@@ -35,9 +35,7 @@ class Paths:
 
     eddies: Path = DEFAULT_EDDY_PATH
     tilt: Path = DEFAULT_TILT_PATH
-    vertical_dictionary: Path = DEFAULT_VERT_PATH
-    # old_eddies: Path = DEFAULT_OLD_EDDY_PATH
-    # beta_eddies: Path = DEFAULT_BETA_EDDY_PATH
+    vert: Path = DEFAULT_VERT_PATH
     grid: Path = DEFAULT_GRID_PATH
     z_r: Path = DEFAULT_ZR_PATH
 
@@ -164,20 +162,19 @@ def load_tilt_tables(paths: Paths = Paths(), *, add_regions: bool = False, grid:
 
     return df_eddies, df_tilt
 
-
-# def load_vertical_dictionary(paths: Paths = Paths()):
-#     return pd.read_pickle(paths.vertical_dictionary)
-
-def load_vertical_dictionary(paths: Paths = Paths()):
-    vertical = read_table(paths.vertical_dictionary)
+def load_vert(paths: Paths = Paths(), dic_form=False):
+    vertical = read_table(paths.vert)
+    if not dic_form:
+        return vertical
+        
     if isinstance(vertical, dict):
         return vertical
-
     out = {}
     if vertical.empty:
         return out
     for (eddy, day), profile in vertical.groupby(["Eddy", "Day"], sort=False):
         out.setdefault(f"Eddy{int(eddy)}", {})[f"Day{int(day)}"] = profile.copy().reset_index(drop=True)
+
     return out
 
 
