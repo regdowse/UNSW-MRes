@@ -897,14 +897,10 @@ def match_old_eddies(sample_eddies_old, df_eddies_old, df_eddies, min_overlap_fr
     return pd.DataFrame(matches)
 
 def compute_core_mean(
-    # df_eddies,
-    # X_grid,
-    # Y_grid,
-    # mask_rho,
     df_data: pd.DataFrame,
     grid: Grid,
     *,
-    base_path=None,
+    base_path=None, #"/srv/scratch/z3533156/26year_BRAN2020/
     varname=None,
     fixed_field=None,
     colname=None,
