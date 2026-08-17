@@ -1,7 +1,8 @@
-"""Leakage-safe tools for predicting subsurface eddy tilt from surface data."""
+"""Leakage-aware tools for predicting eddy tilt from surface information."""
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from itertools import product
 from typing import Mapping, Sequence
@@ -9,75 +10,57 @@ from typing import Mapping, Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.inspection import permutation_importance
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import GroupKFold, GroupShuffleSplit
+from sklearn.model_selection import GroupKFold
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-STATIC_FEATURES = ["beta", "h", "Omega", "Rc", "norm_time"]
-DYNAMIC_FEATURES = [
-    "prop_east_km_day", "prop_north_km_day",
-    "ellipse_major_cos2", "ellipse_major_sin2",
-]
+STRUCTURE_FEATURES = ["Rc", "Omega"]
+ENVIRONMENT_FEATURES = ["beta", "h"]
+PROPAGATION_FEATURES = ["prop_east_km_day", "prop_north_km_day"]
+ELLIPSE_FEATURES = ["ellipse_major_cos2", "ellipse_major_sin2"]
 PV_MAG_FEATURES = ["PV_grad_mag"]
-PV_COMPONENT_FEATURES = ["PV_grad_east", "PV_grad_north"]
-FEATURES = STATIC_FEATURES + DYNAMIC_FEATURES + PV_MAG_FEATURES + PV_COMPONENT_FEATURES
-TARGET_COMPONENTS = ["TiltEast", "TiltNorth"]
-RELATIVE_TARGETS = ["LogTiltDis", "DeltaTiltEast", "DeltaTiltNorth"]
-TARGET_MODES = ("cartesian", "pv_relative")
+PV_DIRECTION_FEATURES = ["PV_grad_unit_east", "PV_grad_unit_north"]
+FEATURES = (STRUCTURE_FEATURES + ENVIRONMENT_FEATURES + PROPAGATION_FEATURES
+            + ELLIPSE_FEATURES + PV_MAG_FEATURES + PV_DIRECTION_FEATURES)
 
+# Each alternative removes or isolates a scientifically meaningful group.
 FEATURE_SETS = {
-    "surface_without_PV": STATIC_FEATURES + DYNAMIC_FEATURES,
-    "PV_magnitude_only": STATIC_FEATURES + DYNAMIC_FEATURES + PV_MAG_FEATURES,
-    "PV_components_only": STATIC_FEATURES + DYNAMIC_FEATURES + PV_COMPONENT_FEATURES,
-    "full_PV_vector": FEATURES,
-    "full_without_dynamics": STATIC_FEATURES + PV_MAG_FEATURES + PV_COMPONENT_FEATURES,
+    "full": FEATURES,
+    "without_PV": STRUCTURE_FEATURES + ENVIRONMENT_FEATURES + PROPAGATION_FEATURES + ELLIPSE_FEATURES,
+    "without_propagation": STRUCTURE_FEATURES + ENVIRONMENT_FEATURES + ELLIPSE_FEATURES + PV_MAG_FEATURES + PV_DIRECTION_FEATURES,
+    "without_ellipse": STRUCTURE_FEATURES + ENVIRONMENT_FEATURES + PROPAGATION_FEATURES + PV_MAG_FEATURES + PV_DIRECTION_FEATURES,
+    "without_beta": STRUCTURE_FEATURES + ["h"] + PROPAGATION_FEATURES + ELLIPSE_FEATURES + PV_MAG_FEATURES + PV_DIRECTION_FEATURES,
+    "without_PV_magnitude": STRUCTURE_FEATURES + ENVIRONMENT_FEATURES + PROPAGATION_FEATURES + ELLIPSE_FEATURES + PV_DIRECTION_FEATURES,
+    "without_PV_direction": STRUCTURE_FEATURES + ENVIRONMENT_FEATURES + PROPAGATION_FEATURES + ELLIPSE_FEATURES + PV_MAG_FEATURES,
+    "structure_environment": STRUCTURE_FEATURES + ENVIRONMENT_FEATURES,
+    "beta_only": ["beta"],
 }
 
-
-@dataclass
-class ModelSplit:
-    """Training and untouched test observations split by complete eddies."""
-
-    train: pd.DataFrame
-    test: pd.DataFrame
-
-    @property
-    def groups_train(self) -> pd.Series:
-        return self.train["Eddy"]
-
-    @property
-    def groups_test(self) -> pd.Series:
-        return self.test["Eddy"]
+MAGNITUDE_TARGET = ["LogTiltDis"]
+DIRECTION_TARGETS = ["TiltUnitEast", "TiltUnitNorth"]
 
 
-def target_availability_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Summarise valid tilt coverage overall and by polarity."""
-
-    valid = df[["TiltDis", "TiltDir"]].notna().all(axis=1)
-    rows = []
-    for label, part in [("All", df), *list(df.groupby("Cyc", dropna=False))]:
-        part_valid = valid.loc[part.index]
-        rows.append({
-            "group": str(label), "rows": len(part),
-            "valid_tilt_rows": int(part_valid.sum()),
-            "valid_fraction": float(part_valid.mean()),
-            "eddies": int(part["Eddy"].nunique()),
-            "eddies_with_tilt": int(part.loc[part_valid, "Eddy"].nunique()),
-        })
-    return pd.DataFrame(rows).set_index("group")
+@dataclass(frozen=True)
+class Configuration:
+    family: str
+    params_key: str
+    params: Mapping
+    feature_set: str
 
 
-def _major_axis_encoding(q11, q12, q22) -> tuple[np.ndarray, np.ndarray]:
-    """Return sin(2 theta), cos(2 theta) for the ellipse's major axis."""
+def angular_error_deg(observed, predicted):
+    return np.abs((np.asarray(predicted) - np.asarray(observed) + 180.0) % 360.0 - 180.0)
 
+
+def _major_axis_encoding(q11, q12, q22):
     q11, q12, q22 = map(lambda x: np.asarray(x, dtype=float), (q11, q12, q22))
     scale = np.hypot(q11 - q22, 2.0 * q12)
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -88,345 +71,350 @@ def _major_axis_encoding(q11, q12, q22) -> tuple[np.ndarray, np.ndarray]:
     return sin2, cos2
 
 
-def prepare_modelling_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Engineer predictors/targets; retain missing predictors for train-only imputation."""
+def prepare_modelling_table(df, *, grid_rotation_deg=20.0):
+    """Engineer predictors and separate magnitude/circular-direction targets."""
 
-    required = {
-        "Eddy", "Day", "Cyc", "TiltDis", "TiltDir", "beta", "h",
-        "Omega", "Rc", "xc", "yc", "q11", "q12", "q22",
-        "PV_grad_mag", "PV_grad_theta",
-    }
+    required = {"Eddy", "Day", "Cyc", "TiltDis", "TiltDir", "beta", "h", "Omega",
+                "Rc", "xc", "yc", "q11", "q12", "q22", "PV_grad_mag", "PV_grad_theta"}
     missing = sorted(required.difference(df.columns))
     if missing:
         raise KeyError(f"Missing required modelling columns: {missing}")
-
     out = df.sort_values(["Eddy", "Day"]).copy()
     out["Cyc"] = out["Cyc"].astype("string")
-    out["Day_idx"] = out.groupby("Eddy").cumcount()
-    last_idx = out.groupby("Eddy")["Day_idx"].transform("max")
-    out["norm_time"] = np.where(last_idx > 0, out["Day_idx"] / last_idx, 0.0)
 
+    # Propagation requires the current and preceding surface positions. It is
+    # therefore a trajectory feature rather than a single-snapshot feature.
     dt = out.groupby("Eddy")["Day"].diff().astype(float).where(lambda x: x > 0)
     out["prop_east_km_day"] = out.groupby("Eddy")["xc"].diff() / dt
     out["prop_north_km_day"] = out.groupby("Eddy")["yc"].diff() / dt
-    # sin2, cos2 = _major_axis_encoding(out["q11"], out["q12"], out["q22"])
-    # out["ellipse_major_sin2"] = sin2
-    # out["ellipse_major_cos2"] = cos2
-    # q11, q12 and q22 describe orientation relative to a model grid
-    # rotated 20° clockwise from geographic north.
-    grid_rotation_rad = np.deg2rad(20.0)
-    sin2_grid, cos2_grid = _major_axis_encoding(
-        out["q11"], out["q12"], out["q22"]
-    )
-    # Rotate the doubled-angle representation:
-    # theta_geographic = theta_grid + 20°
-    rotation_2theta = 2.0 * grid_rotation_rad
-    out["ellipse_major_sin2"] = (
-        sin2_grid * np.cos(rotation_2theta)
-        + cos2_grid * np.sin(rotation_2theta)
-    )
-    out["ellipse_major_cos2"] = (
-        cos2_grid * np.cos(rotation_2theta)
-        - sin2_grid * np.sin(rotation_2theta)
-    )
+
+    sin2_grid, cos2_grid = _major_axis_encoding(out["q11"], out["q12"], out["q22"])
+    rotation = np.deg2rad(2.0 * grid_rotation_deg)
+    out["ellipse_major_sin2"] = sin2_grid * np.cos(rotation) + cos2_grid * np.sin(rotation)
+    out["ellipse_major_cos2"] = cos2_grid * np.cos(rotation) - sin2_grid * np.sin(rotation)
 
     pv_theta = np.deg2rad(out["PV_grad_theta"].astype(float))
-    out["PV_grad_east"] = out["PV_grad_mag"] * np.sin(pv_theta)
-    out["PV_grad_north"] = out["PV_grad_mag"] * np.cos(pv_theta)
-    # Polarity-specific hypothesis: CE tilt is aligned with the PV gradient,
-    # whereas AE tilt is aligned with the direction opposite the PV gradient.
+    out["PV_grad_unit_east"] = np.sin(pv_theta)
+    out["PV_grad_unit_north"] = np.cos(pv_theta)
+    out["PV_grad_east"] = out["PV_grad_mag"] * out["PV_grad_unit_east"]
+    out["PV_grad_north"] = out["PV_grad_mag"] * out["PV_grad_unit_north"]
     out["PV_reference_theta"] = np.where(
-        out["Cyc"].eq("AE"),
-        (out["PV_grad_theta"] + 180.0) % 360.0,
-        out["PV_grad_theta"],
+        out["Cyc"].eq("AE"), (out["PV_grad_theta"] + 180.0) % 360.0, out["PV_grad_theta"]
     )
-    tilt_theta = np.deg2rad(out["TiltDir"].astype(float))
-    out["TiltEast"] = out["TiltDis"] * np.sin(tilt_theta)
-    out["TiltNorth"] = out["TiltDis"] * np.cos(tilt_theta)
-    out["LogTiltDis"] = np.log1p(out["TiltDis"].clip(lower=0))
-    delta = np.deg2rad((out["TiltDir"] - out["PV_reference_theta"] + 180.0) % 360.0 - 180.0)
-    out["DeltaTiltEast"] = np.sin(delta)
-    out["DeltaTiltNorth"] = np.cos(delta)
 
-    targets = out[["TiltDis", "TiltDir", *TARGET_COMPONENTS, *RELATIVE_TARGETS]].astype(float)
+    theta = np.deg2rad(out["TiltDir"].astype(float))
+    out["TiltUnitEast"] = np.sin(theta)
+    out["TiltUnitNorth"] = np.cos(theta)
+    out["LogTiltDis"] = np.log1p(out["TiltDis"].clip(lower=0))
+    targets = out[["TiltDis", "TiltDir", "LogTiltDis", *DIRECTION_TARGETS]].astype(float)
     keep = np.isfinite(targets).all(axis=1) & out[["Eddy", "Cyc"]].notna().all(axis=1)
     out = out.loc[keep].copy()
     out["Eddy"] = out["Eddy"].astype(int)
     return out
 
 
-def grouped_train_test_split(df, *, test_size=0.20, random_state=42) -> ModelSplit:
-    """Reserve complete eddies for one final test evaluation."""
+def target_availability_summary(df):
+    valid = df[["TiltDis", "TiltDir"]].notna().all(axis=1)
+    rows = []
+    for label, part in [("All", df), *list(df.groupby("Cyc", dropna=False))]:
+        v = valid.loc[part.index]
+        rows.append({"group": str(label), "rows": len(part), "valid_tilt_rows": int(v.sum()),
+                     "valid_fraction": float(v.mean()), "eddies": int(part["Eddy"].nunique()),
+                     "eddies_with_tilt": int(part.loc[v, "Eddy"].nunique())})
+    return pd.DataFrame(rows).set_index("group")
 
-    splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
-    train_pos, test_pos = next(splitter.split(df, groups=df["Eddy"]))
-    return ModelSplit(df.iloc[train_pos].copy(), df.iloc[test_pos].copy())
 
-
-def eddy_equal_weights(groups: Sequence) -> np.ndarray:
-    """Give every eddy approximately equal total weight."""
-
+def eddy_equal_weights(groups: Sequence):
     groups = pd.Series(groups)
     weights = 1.0 / groups.map(groups.value_counts()).to_numpy(dtype=float)
     return weights / weights.mean()
 
 
-def make_preprocessor(features, *, scale_numeric):
+def _preprocessor(features, scale):
     steps = [("imputer", SimpleImputer(strategy="median", add_indicator=True))]
-    if scale_numeric:
-        steps.append(("scaler", StandardScaler()))
+    if scale:
+        steps.append(("scale", StandardScaler()))
     return ColumnTransformer([("numeric", Pipeline(steps), list(features))], verbose_feature_names_out=False)
 
 
-def build_model(family, features, params=None, *, random_state=42):
-    """Construct one Ridge or histogram-gradient-boosting pipeline."""
+def candidate_models():
+    """Restrained candidates to keep nested CV computationally practical."""
+    return [
+        ("Ridge", "ridge_1", {"alpha": 1.0}),
+        ("Ridge", "ridge_100", {"alpha": 100.0}),
+        ("Gradient boosting", "boost_15", {"learning_rate": 0.05, "max_iter": 300,
+         "max_leaf_nodes": 15, "min_samples_leaf": 75, "l2_regularization": 1.0}),
+        ("Gradient boosting", "boost_regularised", {"learning_rate": 0.05, "max_iter": 300,
+         "max_leaf_nodes": 15, "min_samples_leaf": 125, "l2_regularization": 10.0}),
+    ]
 
-    params = dict(params or {})
+
+def build_model(family, features, params, *, random_state=42):
     if family == "Ridge":
-        return Pipeline([
-            ("preprocess", make_preprocessor(features, scale_numeric=True)),
-            ("model", Ridge(**{"alpha": 10.0, **params})),
-        ])
+        return Pipeline([("preprocess", _preprocessor(features, True)), ("model", Ridge(**dict(params)))])
     if family == "Gradient boosting":
-        defaults = {
-            "learning_rate": 0.05, "max_iter": 400, "max_leaf_nodes": 31,
-            "min_samples_leaf": 50, "l2_regularization": 1.0,
-            "early_stopping": True, "random_state": random_state,
+        estimator = MultiOutputRegressor(HistGradientBoostingRegressor(
+            early_stopping=True, random_state=random_state, **dict(params)))
+        return Pipeline([("preprocess", _preprocessor(features, False)), ("model", estimator)])
+    raise ValueError(f"Unknown family: {family}")
+
+
+def _targets(task):
+    if task == "magnitude":
+        return MAGNITUDE_TARGET
+    if task == "direction":
+        return DIRECTION_TARGETS
+    raise ValueError(f"Unknown task: {task}")
+
+
+def _fit(model, data, features, task):
+    return model.fit(data[list(features)], data[_targets(task)],
+                     model__sample_weight=eddy_equal_weights(data["Eddy"]))
+
+
+def _predicted_direction(raw):
+    raw = np.asarray(raw, dtype=float)
+    return (np.degrees(np.arctan2(raw[:, 0], raw[:, 1])) + 360.0) % 360.0
+
+
+def score_task(task, data, raw, *, minimum_tilt_km=5.0):
+    if task == "magnitude":
+        predicted = np.expm1(np.clip(np.asarray(raw)[:, 0], 0.0, None))
+        observed = data["TiltDis"].to_numpy(dtype=float)
+        weights = eddy_equal_weights(data["Eddy"])
+        scores = {
+            "magnitude_MAE_km": float(np.mean(np.abs(predicted - observed))),
+            "eddy_weighted_magnitude_MAE_km": float(np.average(np.abs(predicted - observed), weights=weights)),
+            "magnitude_RMSE_km": float(np.sqrt(mean_squared_error(observed, predicted))),
+            "magnitude_R2": float(r2_score(observed, predicted)),
+            "magnitude_bias_km": float(np.average(predicted - observed, weights=weights)),
         }
-        return Pipeline([
-            ("preprocess", make_preprocessor(features, scale_numeric=False)),
-            ("model", MultiOutputRegressor(HistGradientBoostingRegressor(**{**defaults, **params}))),
-        ])
-    raise ValueError(f"Unknown model family: {family}")
+        return scores, predicted
+    predicted = _predicted_direction(raw)
+    use = data["TiltDis"].to_numpy(dtype=float) >= minimum_tilt_km
+    errors = angular_error_deg(data.loc[use, "TiltDir"], predicted[use])
+    weights = eddy_equal_weights(data.loc[use, "Eddy"])
+    scores = {"direction_rows": int(use.sum()), "mean_angular_error_deg": float(errors.mean()),
+              "eddy_weighted_mean_angular_error_deg": float(np.average(errors, weights=weights)),
+              "median_angular_error_deg": float(np.median(errors)),
+              "within_30deg_fraction": float(np.mean(errors <= 30.0))}
+    return scores, predicted
 
 
-def default_candidates():
-    """Compact hyperparameter and target-representation search space."""
-
-    candidates = [
-        {"family": "Ridge", "target_mode": mode, "params": {"alpha": alpha}}
-        for mode, alpha in product(TARGET_MODES, [0.1, 1.0, 10.0, 100.0])
-    ]
-    boosting_grid = [
-        {"learning_rate": 0.03, "max_leaf_nodes": 15, "min_samples_leaf": 50, "l2_regularization": 1.0},
-        {"learning_rate": 0.05, "max_leaf_nodes": 31, "min_samples_leaf": 50, "l2_regularization": 1.0},
-        {"learning_rate": 0.05, "max_leaf_nodes": 15, "min_samples_leaf": 100, "l2_regularization": 10.0},
-        {"learning_rate": 0.10, "max_leaf_nodes": 15, "min_samples_leaf": 100, "l2_regularization": 1.0},
-    ]
-    candidates += [
-        {"family": "Gradient boosting", "target_mode": mode, "params": params}
-        for mode, params in product(TARGET_MODES, boosting_grid)
-    ]
-    return candidates
+def _metric(task):
+    return "eddy_weighted_magnitude_MAE_km" if task == "magnitude" else "eddy_weighted_mean_angular_error_deg"
 
 
-def target_columns(mode):
-    if mode == "cartesian":
-        return TARGET_COMPONENTS
-    if mode == "pv_relative":
-        return RELATIVE_TARGETS
-    raise ValueError(f"Unknown target mode: {mode}")
+def _configurations(feature_sets):
+    for (family, key, params), feature_set in product(candidate_models(), feature_sets):
+        yield Configuration(family, key, params, feature_set)
 
 
-def prediction_to_components(prediction, metadata, mode):
-    predicted = np.asarray(prediction, dtype=float)
-    if mode == "cartesian":
-        return predicted
-    distance = np.expm1(np.clip(predicted[:, 0], 0.0, None))
-    delta = np.degrees(np.arctan2(predicted[:, 1], predicted[:, 2]))
-    direction = (metadata["PV_reference_theta"].to_numpy(dtype=float) + delta) % 360.0
-    theta = np.deg2rad(direction)
-    return np.column_stack([distance * np.sin(theta), distance * np.cos(theta)])
+def select_configuration_grouped(data, task, *, feature_sets=FEATURE_SETS, n_splits=3, random_state=42):
+    splits = list(GroupKFold(n_splits=n_splits).split(data, groups=data["Eddy"]))
+    configs = list(_configurations(feature_sets))
+    rows = []
+    for config_id, config in enumerate(configs):
+        features = feature_sets[config.feature_set]
+        for fold, (fit_pos, val_pos) in enumerate(splits, 1):
+            fit_data, val_data = data.iloc[fit_pos], data.iloc[val_pos]
+            model = build_model(config.family, features, config.params, random_state=random_state + fold)
+            fitted = _fit(model, fit_data, features, task)
+            scores, _ = score_task(task, val_data, fitted.predict(val_data[features]))
+            rows.append({"config_id": config_id, "fold": fold, "family": config.family,
+                         "params_key": config.params_key, "feature_set": config.feature_set, **scores})
+    results = pd.DataFrame(rows)
+    winner = int(results.groupby("config_id")[_metric(task)].mean().idxmin())
+    return configs[winner], results
 
 
-def fit_pipeline(model, data, features, mode, *, equal_eddy_weight=True):
-    kwargs = {"model__sample_weight": eddy_equal_weights(data["Eddy"])} if equal_eddy_weight else {}
-    return model.fit(data[list(features)], data[target_columns(mode)], **kwargs)
+def _baseline_predictions(task, train, validation):
+    if task == "magnitude":
+        value = float(train.groupby("Eddy")["TiltDis"].median().median())
+        return {"Eddy-median baseline": np.full(len(validation), value)}
+    per_eddy = train.groupby("Eddy")[DIRECTION_TARGETS].mean().mean()
+    mean_direction = (np.degrees(np.arctan2(per_eddy.iloc[0], per_eddy.iloc[1])) + 360.0) % 360.0
+    propagation = (np.degrees(np.arctan2(validation["prop_east_km_day"],
+                                          validation["prop_north_km_day"])) + 360.0) % 360.0
+    return {"Mean-direction baseline": np.full(len(validation), mean_direction),
+            "Polarity-aligned PV baseline": validation["PV_reference_theta"].to_numpy(float),
+            "Propagation-direction baseline": propagation.to_numpy(float)}
 
 
-def components_to_polar(components):
-    values = np.asarray(components, dtype=float)
-    east, north = values[:, 0], values[:, 1]
-    return np.hypot(east, north), (np.degrees(np.arctan2(east, north)) + 360.0) % 360.0
+def _score_baseline(task, data, predicted, minimum_tilt_km):
+    if task == "magnitude":
+        observed = data["TiltDis"].to_numpy(float)
+        weights = eddy_equal_weights(data["Eddy"])
+        return {"magnitude_MAE_km": float(np.mean(np.abs(predicted - observed))),
+                "eddy_weighted_magnitude_MAE_km": float(np.average(np.abs(predicted - observed), weights=weights)),
+                "magnitude_RMSE_km": float(np.sqrt(np.mean((predicted - observed) ** 2))),
+                "magnitude_R2": float(r2_score(observed, predicted)),
+                "magnitude_bias_km": float(np.average(predicted - observed, weights=weights))}
+    use = data["TiltDis"].to_numpy(float) >= minimum_tilt_km
+    errors = angular_error_deg(data.loc[use, "TiltDir"], np.asarray(predicted)[use])
+    weights = eddy_equal_weights(data.loc[use, "Eddy"])
+    return {"direction_rows": int(use.sum()), "mean_angular_error_deg": float(errors.mean()),
+            "eddy_weighted_mean_angular_error_deg": float(np.average(errors, weights=weights)),
+            "median_angular_error_deg": float(np.median(errors)),
+            "within_30deg_fraction": float(np.mean(errors <= 30.0))}
 
 
-def angular_error_deg(observed, predicted):
-    return np.abs((np.asarray(predicted) - np.asarray(observed) + 180.0) % 360.0 - 180.0)
+def nested_grouped_evaluation(data, task, *, feature_sets=FEATURE_SETS, outer_splits=5,
+                              inner_splits=3, minimum_tilt_km=5.0, random_state=42):
+    """Repeat model and feature selection inside every held-out eddy fold."""
+    outer = GroupKFold(n_splits=outer_splits)
+    scores, selections, predictions = [], [], []
+    for outer_fold, (train_pos, test_pos) in enumerate(outer.split(data, groups=data["Eddy"]), 1):
+        train, test = data.iloc[train_pos], data.iloc[test_pos]
+        config, inner = select_configuration_grouped(
+            train, task, feature_sets=feature_sets, n_splits=inner_splits,
+            random_state=random_state + outer_fold * 100)
+        features = feature_sets[config.feature_set]
+        fitted = _fit(build_model(config.family, features, config.params,
+                                  random_state=random_state + outer_fold), train, features, task)
+        task_scores, predicted = score_task(
+            task, test, fitted.predict(test[features]), minimum_tilt_km=minimum_tilt_km)
+        scores.append({"outer_fold": outer_fold, "model": "Selected model", **task_scores})
+        selections.append({"outer_fold": outer_fold, "family": config.family,
+                           "params_key": config.params_key, "feature_set": config.feature_set,
+                           "inner_score": inner.groupby("config_id")[_metric(task)].mean().min()})
+        frame = test[["Eddy", "TiltDis", "TiltDir", "beta", "Rc", "PV_reference_theta"]].copy()
+        frame["outer_fold"] = outer_fold
+        if task == "magnitude":
+            frame["predicted_magnitude"] = predicted
+        else:
+            frame["predicted_direction"] = predicted
+            frame["angular_error"] = angular_error_deg(frame["TiltDir"], predicted)
+        predictions.append(frame)
+        for name, baseline in _baseline_predictions(task, train, test).items():
+            valid_baseline = np.isfinite(np.asarray(baseline, dtype=float))
+            if valid_baseline.any():
+                baseline_data = test.iloc[np.flatnonzero(valid_baseline)]
+                scores.append({"outer_fold": outer_fold, "model": name,
+                               **_score_baseline(task, baseline_data,
+                                                 np.asarray(baseline)[valid_baseline],
+                                                 minimum_tilt_km)})
+    return pd.DataFrame(scores), pd.DataFrame(selections), pd.concat(predictions)
 
 
-def prediction_frame(observed_components, predicted_components, *, index=None):
-    observed, predicted = map(lambda x: np.asarray(x, dtype=float), (observed_components, predicted_components))
-    obs_dis, obs_dir = components_to_polar(observed)
-    pred_dis, pred_dir = components_to_polar(predicted)
-    return pd.DataFrame({
-        "observed_east": observed[:, 0], "observed_north": observed[:, 1],
-        "predicted_east": predicted[:, 0], "predicted_north": predicted[:, 1],
-        "observed_distance": obs_dis, "predicted_distance": pred_dis,
-        "observed_direction": obs_dir, "predicted_direction": pred_dir,
-        "vector_error": np.hypot(predicted[:, 0] - observed[:, 0], predicted[:, 1] - observed[:, 1]),
-        "angular_error": angular_error_deg(obs_dir, pred_dir),
-    }, index=index)
+def summarise_outer_scores(scores, task):
+    secondary = "magnitude_R2" if task == "magnitude" else "within_30deg_fraction"
+    return scores.groupby("model").agg(mean_score=(_metric(task), "mean"),
+                                        fold_SD=(_metric(task), "std"),
+                                        secondary_mean=(secondary, "mean")).sort_values("mean_score")
 
 
-def score_predictions(observed_components, predicted_components, *, groups=None):
-    pred = prediction_frame(observed_components, predicted_components)
-    observed, predicted = map(lambda x: np.asarray(x, dtype=float), (observed_components, predicted_components))
-    scores = {
-        "vector_MAE_km": float(pred["vector_error"].mean()),
-        "vector_RMSE_km": float(np.sqrt(np.mean(pred["vector_error"] ** 2))),
-        "distance_MAE_km": float(np.abs(pred["predicted_distance"] - pred["observed_distance"]).mean()),
-        "distance_RMSE_km": float(np.sqrt(mean_squared_error(pred["observed_distance"], pred["predicted_distance"]))),
-        "east_R2": float(r2_score(observed[:, 0], predicted[:, 0])),
-        "north_R2": float(r2_score(observed[:, 1], predicted[:, 1])),
-        "median_angular_error_deg": float(pred["angular_error"].median()),
-        "within_30deg_fraction": float((pred["angular_error"] <= 30).mean()),
-    }
-    if groups is not None:
-        weights = eddy_equal_weights(groups)
-        scores["eddy_weighted_vector_MAE_km"] = float(np.average(pred["vector_error"], weights=weights))
-        scores["eddy_weighted_distance_MAE_km"] = float(np.average(np.abs(pred["predicted_distance"] - pred["observed_distance"]), weights=weights))
-    return scores
+def consensus_configuration(selections):
+    family, key, feature_set = Counter(zip(selections["family"], selections["params_key"],
+                                            selections["feature_set"])).most_common(1)[0][0]
+    params = next(p for fam, name, p in candidate_models() if fam == family and name == key)
+    return Configuration(family, key, params, feature_set)
 
 
-def baseline_predictions(train, validation):
-    # Compute climatology from per-eddy means so long-lived eddies do not
-    # dominate the baseline against which equally weighted models are judged.
-    mean_vector = train.groupby("Eddy")[TARGET_COMPONENTS].mean().mean().to_numpy(dtype=float)
-    climatology = np.tile(mean_vector, (len(validation), 1))
-    distance = float(train.groupby("Eddy")["TiltDis"].median().median())
-    theta = np.deg2rad(validation["PV_reference_theta"].to_numpy(dtype=float))
-    pv_direction = np.column_stack([distance * np.sin(theta), distance * np.cos(theta)])
-    return {"Mean-vector baseline": climatology, "Polarity-aligned PV baseline": pv_direction}
+def feature_set_comparison(inner_results, task):
+    metric = _metric(task)
+    by_config = inner_results.groupby(["feature_set", "family", "params_key"])[metric].mean().reset_index()
+    return by_config.loc[by_config.groupby("feature_set")[metric].idxmin()].sort_values(metric)
 
 
-def evaluate_candidate(candidate, train, validation, features=FEATURES, *, random_state=42):
-    model = build_model(candidate["family"], features, candidate["params"], random_state=random_state)
-    fitted = fit_pipeline(model, train, features, candidate["target_mode"])
-    raw = fitted.predict(validation[list(features)])
-    predicted = prediction_to_components(raw, validation, candidate["target_mode"])
-    observed = validation[TARGET_COMPONENTS].to_numpy(dtype=float)
-    return (
-        score_predictions(observed, predicted, groups=validation["Eddy"]),
-        fitted,
-        prediction_frame(observed, predicted, index=validation.index),
-    )
+def assign_eddy_spatial_blocks(data, *, bins=4):
+    centres = data.groupby("Eddy")[["xc", "yc"]].median()
+    xbin = pd.qcut(centres["xc"], bins, labels=False, duplicates="drop")
+    ybin = pd.qcut(centres["yc"], bins, labels=False, duplicates="drop")
+    return data.join((xbin.astype(str) + "_" + ybin.astype(str)).rename("spatial_block"), on="Eddy")
 
 
-def tune_candidates_grouped(train, *, features=FEATURES, candidates=None, n_splits=5, random_state=42):
-    """Select model family, targets, and hyperparameters using training eddies only."""
-
-    candidates = list(candidates or default_candidates())
+def spatial_block_evaluation(data, task, config, *, n_splits=4, minimum_tilt_km=5.0):
+    """Stress-test a fixed nested-CV consensus configuration across regions."""
+    blocked = assign_eddy_spatial_blocks(data)
+    features = FEATURE_SETS[config.feature_set]
+    rows = []
     splitter = GroupKFold(n_splits=n_splits)
-    folds = list(splitter.split(train, groups=train["Eddy"]))
-    rows = []
-    for candidate_id, candidate in enumerate(candidates):
-        for fold, (fit_pos, val_pos) in enumerate(folds, start=1):
-            scores, _, _ = evaluate_candidate(candidate, train.iloc[fit_pos], train.iloc[val_pos], features, random_state=random_state + fold)
-            rows.append({"candidate_id": candidate_id, "family": candidate["family"], "target_mode": candidate["target_mode"], "params": repr(candidate["params"]), "fold": fold, **scores})
-    for fold, (fit_pos, val_pos) in enumerate(folds, start=1):
-        fit_data, val_data = train.iloc[fit_pos], train.iloc[val_pos]
-        observed = val_data[TARGET_COMPONENTS].to_numpy(dtype=float)
-        for name, predicted in baseline_predictions(fit_data, val_data).items():
-            rows.append({"candidate_id": name, "family": name, "target_mode": "baseline", "params": "{}", "fold": fold, **score_predictions(observed, predicted, groups=val_data["Eddy"])})
+    for fold, (train_pos, test_pos) in enumerate(splitter.split(blocked, groups=blocked["spatial_block"]), 1):
+        train, test = blocked.iloc[train_pos], blocked.iloc[test_pos]
+        fitted = _fit(build_model(config.family, features, config.params, random_state=500 + fold),
+                      train, features, task)
+        task_scores, _ = score_task(task, test, fitted.predict(test[features]),
+                                    minimum_tilt_km=minimum_tilt_km)
+        rows.append({"spatial_fold": fold, **task_scores})
     return pd.DataFrame(rows)
 
 
-def summarise_tuning(tuning):
-    return tuning.groupby(["candidate_id", "family", "target_mode", "params"], dropna=False).agg(
-        vector_MAE_mean=("vector_MAE_km", "mean"), vector_MAE_std=("vector_MAE_km", "std"),
-        eddy_vector_MAE_mean=("eddy_weighted_vector_MAE_km", "mean"),
-        distance_MAE_mean=("distance_MAE_km", "mean"),
-        angular_error_median=("median_angular_error_deg", "median"),
-        within_30deg_mean=("within_30deg_fraction", "mean"),
-    ).sort_values("eddy_vector_MAE_mean")
+def beta_magnitude_association(data, *, n_boot=1000, random_state=42):
+    """Descriptive eddy-level beta/magnitude association with eddy bootstrap CI."""
+    eddies = data.groupby("Eddy", as_index=False).agg(
+        beta=("beta", "median"), tilt_magnitude=("TiltDis", "median"), Rc=("Rc", "median"),
+        Omega=("Omega", "median"), h=("h", "median")).dropna()
+    rho = float(spearmanr(eddies["beta"], eddies["tilt_magnitude"]).statistic)
+    rng = np.random.default_rng(random_state)
+    boot = []
+    for _ in range(n_boot):
+        sample = eddies.iloc[rng.integers(0, len(eddies), len(eddies))]
+        boot.append(spearmanr(sample["beta"], sample["tilt_magnitude"]).statistic)
+    return {"eddies": len(eddies), "spearman_rho": rho,
+            "CI_low": float(np.nanpercentile(boot, 2.5)),
+            "CI_high": float(np.nanpercentile(boot, 97.5))}, eddies
 
 
-def best_candidate(tuning, candidates=None):
-    candidates = list(candidates or default_candidates())
-    ids = pd.to_numeric(tuning["candidate_id"], errors="coerce")
-    scores = tuning.loc[ids.notna()].assign(numeric_id=ids[ids.notna()].astype(int)).groupby("numeric_id")["eddy_weighted_vector_MAE_km"].mean()
-    return dict(candidates[int(scores.idxmin())])
-
-
-def fit_selected_and_test(candidate, split, *, features=FEATURES, random_state=42):
-    scores, fitted, prediction = evaluate_candidate(candidate, split.train, split.test, features, random_state=random_state)
-    rows = [{"model": "Selected model", **scores}]
-    predictions = {"Selected model": prediction}
-    observed = split.test[TARGET_COMPONENTS].to_numpy(dtype=float)
-    for name, predicted in baseline_predictions(split.train, split.test).items():
-        rows.append({"model": name, **score_predictions(observed, predicted, groups=split.test["Eddy"])})
-        predictions[name] = prediction_frame(observed, predicted, index=split.test.index)
-    scores_df = pd.DataFrame(rows).set_index("model").sort_values("eddy_weighted_vector_MAE_km")
-    return fitted, prediction, scores_df, predictions
-
-
-def feature_ablation_cv(train, candidate, *, feature_sets=FEATURE_SETS, n_splits=5, random_state=42):
-    splitter = GroupKFold(n_splits=n_splits)
-    folds = list(splitter.split(train, groups=train["Eddy"]))
+def propagation_confounding_summary(data):
+    """Between-track versus within-track propagation diagnostic (not predictors)."""
+    out = data.copy()
+    for axis in ("east", "north"):
+        source = f"prop_{axis}_km_day"
+        out[f"track_mean_prop_{axis}"] = out.groupby("Eddy")[source].transform("mean")
+        out[f"prop_{axis}_anomaly"] = out[source] - out[f"track_mean_prop_{axis}"]
     rows = []
-    for name, features in feature_sets.items():
-        for fold, (fit_pos, val_pos) in enumerate(folds, start=1):
-            scores, _, _ = evaluate_candidate(candidate, train.iloc[fit_pos], train.iloc[val_pos], features, random_state=random_state + fold)
-            rows.append({"feature_set": name, "fold": fold, **scores})
-    return pd.DataFrame(rows)
+    for name in ["track_mean_prop_east", "track_mean_prop_north",
+                 "prop_east_anomaly", "prop_north_anomaly"]:
+        valid = out[[name, "TiltDis"]].dropna()
+        rows.append({"quantity": name,
+                     "spearman_with_tilt_magnitude": spearmanr(valid[name], valid["TiltDis"]).statistic})
+    return pd.DataFrame(rows).set_index("quantity"), out
 
 
-def repeated_grouped_validation(data, candidate, *, features=FEATURES, n_repeats=5, test_size=0.20, random_state=100):
-    rows = []
-    for repeat in range(n_repeats):
-        split = grouped_train_test_split(data, test_size=test_size, random_state=random_state + repeat)
-        scores, _, _ = evaluate_candidate(candidate, split.train, split.test, features, random_state=random_state + repeat)
-        rows.append({"repeat": repeat + 1, "model": "Selected model", **scores})
-        observed = split.test[TARGET_COMPONENTS].to_numpy(dtype=float)
-        for name, predicted in baseline_predictions(split.train, split.test).items():
-            rows.append({"repeat": repeat + 1, "model": name, **score_predictions(observed, predicted, groups=split.test["Eddy"])})
-    return pd.DataFrame(rows)
-
-
-def direction_performance_by_tilt(prediction, thresholds=(0.0, 5.0, 10.0, 20.0)):
+def direction_performance_by_tilt(predictions, thresholds=(0, 5, 10, 20)):
     rows = []
     for threshold in thresholds:
-        part = prediction[prediction["observed_distance"] >= threshold]
-        rows.append({"minimum_tilt_km": threshold, "rows": len(part), "median_angular_error_deg": part["angular_error"].median(), "within_30deg_fraction": (part["angular_error"] <= 30).mean()})
+        part = predictions[predictions["TiltDis"] >= threshold]
+        errors = angular_error_deg(part["TiltDir"], part["predicted_direction"])
+        rows.append({"minimum_tilt_km": threshold, "rows": len(part),
+                     "median_angular_error_deg": np.median(errors),
+                     "within_30deg_fraction": np.mean(errors <= 30)})
     return pd.DataFrame(rows).set_index("minimum_tilt_km")
 
 
-def raw_feature_permutation_importance(fitted, test, candidate, *, features=FEATURES, n_repeats=10, random_state=42):
-    y = test[target_columns(candidate["target_mode"])]
-    def skill(estimator, X, raw_y):
-        metadata = test.loc[X.index]
-        predicted = prediction_to_components(estimator.predict(X), metadata, candidate["target_mode"])
-        observed = metadata[TARGET_COMPONENTS].to_numpy(dtype=float)
-        return -score_predictions(observed, predicted, groups=metadata["Eddy"])["eddy_weighted_vector_MAE_km"]
-    result = permutation_importance(fitted, test[list(features)], y, scoring=skill, n_repeats=n_repeats, random_state=random_state, n_jobs=-1)
-    return pd.DataFrame({"feature": features, "importance_mean": result.importances_mean, "importance_std": result.importances_std}).sort_values("importance_mean", ascending=False)
-
-
-def plot_model_comparison(scores):
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-    ordered = scores.sort_values("eddy_weighted_vector_MAE_km")
-    axes[0].barh(ordered.index, ordered["eddy_weighted_vector_MAE_km"], color="steelblue")
-    axes[0].invert_yaxis(); axes[0].set_xlabel("Equal-eddy-weighted vector MAE (km)")
-    axes[1].barh(ordered.index, ordered["median_angular_error_deg"], color="darkorange")
-    axes[1].invert_yaxis(); axes[1].set_xlabel("Median angular error (degrees)")
-    fig.tight_layout(); return fig, axes
-
-
-def plot_prediction_diagnostics(prediction, *, title):
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.3))
-    axes[0].hexbin(prediction["observed_distance"], prediction["predicted_distance"], gridsize=45, mincnt=1, cmap="viridis")
-    limit = np.nanpercentile(np.r_[prediction["observed_distance"], prediction["predicted_distance"]], 99)
-    axes[0].plot([0, limit], [0, limit], "k--", lw=1); axes[0].set(xlim=(0, limit), ylim=(0, limit), xlabel="Observed distance (km)", ylabel="Predicted distance (km)")
-    axes[1].hexbin(prediction["observed_east"], prediction["observed_north"], C=prediction["vector_error"], reduce_C_function=np.mean, gridsize=40, mincnt=1, cmap="magma")
-    axes[1].set_aspect("equal", adjustable="box"); axes[1].set(xlabel="Observed eastward tilt (km)", ylabel="Observed northward tilt (km)")
-    axes[2].hist(prediction["angular_error"], bins=np.arange(0, 185, 5), color="slateblue", alpha=0.85)
-    axes[2].axvline(90, color="k", ls="--", lw=1); axes[2].set(xlabel="Angular error (degrees)", ylabel="Count", xlim=(0, 180))
+def plot_magnitude_oof(predictions, *, title):
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes[0].hexbin(predictions["TiltDis"], predictions["predicted_magnitude"],
+                   gridsize=45, mincnt=1, cmap="viridis")
+    limit = np.nanpercentile(np.r_[predictions["TiltDis"], predictions["predicted_magnitude"]], 99)
+    axes[0].plot([0, limit], [0, limit], "k--", lw=1)
+    axes[0].set(xlim=(0, limit), ylim=(0, limit), xlabel="Observed magnitude (km)",
+                ylabel="Out-of-fold predicted magnitude (km)")
+    residual = predictions["predicted_magnitude"] - predictions["TiltDis"]
+    axes[1].scatter(predictions["TiltDis"], residual, s=4, alpha=0.15)
+    axes[1].axhline(0, color="k", ls="--", lw=1)
+    axes[1].set(xlabel="Observed magnitude (km)", ylabel="Residual (km)")
     fig.suptitle(title); fig.tight_layout(); return fig, axes
 
 
-def plot_permutation_importance(importance, *, title):
-    ordered = importance.sort_values("importance_mean")
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.barh(ordered["feature"], ordered["importance_mean"], xerr=ordered["importance_std"], color="teal", alpha=0.8)
-    ax.axvline(0, color="k", lw=0.8); ax.set_xlabel("Increase in equal-eddy vector MAE after permutation (km)"); ax.set_title(title)
-    fig.tight_layout(); return fig, ax
+def plot_direction_oof(predictions, *, title):
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes[0].hist(predictions["angular_error"], bins=np.arange(0, 185, 5), color="slateblue")
+    axes[0].axvline(90, color="k", ls="--", lw=1)
+    axes[0].set(xlim=(0, 180), xlabel="Angular error (degrees)", ylabel="Count")
+    axes[1].scatter(predictions["TiltDis"], predictions["angular_error"], s=4, alpha=0.15)
+    axes[1].set(xlabel="Observed magnitude (km)", ylabel="Angular error (degrees)", ylim=(0, 180))
+    fig.suptitle(title); fig.tight_layout(); return fig, axes
+
+
+def plot_beta_relationship(eddy_table, *, title):
+    ordered = eddy_table.sort_values("beta").copy()
+    ordered["beta_bin"] = pd.qcut(ordered["beta"], 10, duplicates="drop")
+    binned = ordered.groupby("beta_bin", observed=True).agg(beta=("beta", "median"),
+                                                             tilt=("tilt_magnitude", "median"))
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.scatter(ordered["beta"], ordered["tilt_magnitude"], s=8, alpha=0.15, label="Eddy median")
+    ax.plot(binned["beta"], binned["tilt"], "o-", color="crimson", label="Decile median")
+    ax.set(xlabel="Beta", ylabel="Median tilt magnitude (km)", title=title)
+    ax.legend(); fig.tight_layout(); return fig, ax
