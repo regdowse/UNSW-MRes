@@ -179,7 +179,10 @@ def _predicted_direction(raw):
 
 def score_task(task, data, raw, *, minimum_tilt_km=5.0):
     if task == "magnitude":
-        predicted = np.expm1(np.clip(np.asarray(raw)[:, 0], 0.0, None))
+        # Ridge returns shape (n_samples,) for a single target, whereas the
+        # MultiOutputRegressor used by gradient boosting returns
+        # (n_samples, 1). Flattening safely supports both representations.
+        predicted = np.expm1(np.clip(np.asarray(raw, dtype=float).reshape(-1), 0.0, None))
         observed = data["TiltDis"].to_numpy(dtype=float)
         weights = eddy_equal_weights(data["Eddy"])
         scores = {
