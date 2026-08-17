@@ -17,6 +17,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 from scipy.stats import linregress
 from scipy.stats import binned_statistic_2d
+from matplotlib.colors import Normalize
 
 DEFAULT_EDDY_PATH = Path("/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/processed/eddy_dataset_processed.parquet")
 DEFAULT_TILT_PATH = Path("/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/tilt/tilt_dataset.parquet")
@@ -1033,6 +1034,80 @@ def binned_median(x, y, v, xbins, ybins):
 
     return out
     
+# def plot_binned_median_map(
+#     df_data: pd.DataFrame,
+#     grid: Grid,
+#     *,
+#     metric='Rc',
+#     vmin=0,
+#     vmax=120,
+#     rule='fd',
+#     levels_lat=[-40, -35, -30, -25],
+#     levels_lon=[150, 155, 160],
+#     cmaps={'AE': 'Reds', 'CE': 'Blues'},
+#     units='km',
+#     figsize=(9, 8)
+# ):
+#     df_data = df_data.copy()
+#     xbins = bin_edges_fd(pd.to_numeric(df_data.xc, errors='coerce').to_numpy(dtype=float), grid.X_grid, rule=rule)
+#     ybins = bin_edges_fd(pd.to_numeric(df_data.yc, errors='coerce').to_numpy(dtype=float), grid.Y_grid, rule=rule)
+
+#     norm = Normalize(vmin=vmin, vmax=vmax)
+
+#     fig, axs = plt.subplots(1, 2, figsize=figsize, sharey=True)
+
+#     for ax, cyc in zip(axs, ['AE', 'CE']):
+
+#         df = (
+#             df_data[df_data.Cyc.eq(cyc)]
+#             .dropna(subset=['xc', 'yc', metric])
+#             .sort_values(metric, kind='mergesort', ignore_index=True)
+#         )
+
+#         ax.contour(grid.X_grid, grid.Y_grid, grid.h, levels=[4000], colors='k')
+
+#         H = binned_median(
+#             df.xc.to_numpy(dtype=float),
+#             df.yc.to_numpy(dtype=float),
+#             df[metric].to_numpy(dtype=float),
+#             xbins,
+#             ybins
+#         )
+
+#         m = ax.pcolormesh(
+#             xbins, ybins, H,
+#             cmap=cmaps[cyc],
+#             norm=norm,
+#             shading='auto',
+#             rasterized=True
+#         )
+
+#         cb = fig.colorbar(m, ax=ax, location='top', shrink=0.9, pad=0.02)
+#         cb.set_label(fr'{cyc} median surface ${metric}$ ({units})', fontsize=12)
+#         cb.set_ticks(np.linspace(vmin, vmax, 5))
+
+#         ax.contourf(
+#             grid.X_grid, grid.Y_grid, np.where(grid.mask_rho == 0, 1, np.nan),
+#             levels=[0.5, 1.5], colors=['k'], alpha=0.5
+#         )
+
+#         c1 = ax.contour(grid.X_grid, grid.Y_grid, lat_rho, levels=levels_lat, colors='k', linewidths=0.5)
+#         ax.clabel(c1, fmt=lambda v: f"{-v:.0f}°S", inline=True, colors='k')
+
+#         c2 = ax.contour(grid.X_grid, grid.Y_grid, lon_rho, levels=levels_lon, colors='k', linewidths=0.5)
+#         ax.clabel(c2, fmt=lambda v: f"{v:.0f}°E", inline=True, colors='k')
+
+#         ax.axis('equal')
+#         ax.set_xlim(15, grid.X_grid.max())
+#         ax.set_ylim(grid.Y_grid.min(), grid.Y_grid.max())
+#         ax.set_xlabel('x (km)', fontsize=11)
+
+#     axs[0].set_ylabel('y (km)', fontsize=11)
+
+#     plt.tight_layout()
+#     plt.show()
+
+#     return fig, axs
 def plot_binned_median_map(
     df_data: pd.DataFrame,
     grid: Grid,
@@ -1045,15 +1120,30 @@ def plot_binned_median_map(
     levels_lon=[150, 155, 160],
     cmaps={'AE': 'Reds', 'CE': 'Blues'},
     units='km',
-    figsize=(9, 8)
+    figsize=(9, 8),
+    fig=None,
+    axs=None,
+    show=True,
+    cbar_loc='top'
 ):
     df_data = df_data.copy()
-    xbins = bin_edges_fd(pd.to_numeric(df_data.xc, errors='coerce').to_numpy(dtype=float), grid.X_grid, rule=rule)
-    ybins = bin_edges_fd(pd.to_numeric(df_data.yc, errors='coerce').to_numpy(dtype=float), grid.Y_grid, rule=rule)
+
+    xbins = bin_edges_fd(
+        pd.to_numeric(df_data.xc, errors='coerce').to_numpy(dtype=float),
+        grid.X_grid,
+        rule=rule
+    )
+    ybins = bin_edges_fd(
+        pd.to_numeric(df_data.yc, errors='coerce').to_numpy(dtype=float),
+        grid.Y_grid,
+        rule=rule
+    )
 
     norm = Normalize(vmin=vmin, vmax=vmax)
 
-    fig, axs = plt.subplots(1, 2, figsize=figsize, sharey=True)
+    # Create figure only if axes weren't supplied
+    if axs is None:
+        fig, axs = plt.subplots(1, 2, figsize=figsize, sharey=True)
 
     for ax, cyc in zip(axs, ['AE', 'CE']):
 
@@ -1062,8 +1152,6 @@ def plot_binned_median_map(
             .dropna(subset=['xc', 'yc', metric])
             .sort_values(metric, kind='mergesort', ignore_index=True)
         )
-
-        ax.contour(grid.X_grid, grid.Y_grid, grid.h, levels=[4000], colors='k')
 
         H = binned_median(
             df.xc.to_numpy(dtype=float),
@@ -1081,30 +1169,80 @@ def plot_binned_median_map(
             rasterized=True
         )
 
-        cb = fig.colorbar(m, ax=ax, location='top', shrink=0.9, pad=0.02)
-        cb.set_label(fr'{cyc} median surface ${metric}$ ({units})', fontsize=12)
+        cb = fig.colorbar(
+            m,
+            ax=ax,
+            location=cbar_loc,
+            shrink=0.9,
+            pad=0.02
+        )
+        cb.set_label(
+            fr'{cyc} median ${metric}$ ({units})',
+            fontsize=12
+        )
         cb.set_ticks(np.linspace(vmin, vmax, 5))
 
-        ax.contourf(
-            grid.X_grid, grid.Y_grid, np.where(grid.mask_rho == 0, 1, np.nan),
-            levels=[0.5, 1.5], colors=['k'], alpha=0.5
+        # 4000 m contour
+        ax.contour(
+            grid.X_grid,
+            grid.Y_grid,
+            grid.h,
+            levels=[4000],
+            colors='k'
         )
 
-        c1 = ax.contour(grid.X_grid, grid.Y_grid, lat_rho, levels=levels_lat, colors='k', linewidths=0.5)
-        ax.clabel(c1, fmt=lambda v: f"{-v:.0f}°S", inline=True, colors='k')
+        # Land
+        ax.contourf(
+            grid.X_grid,
+            grid.Y_grid,
+            np.where(grid.mask_rho == 0, 1, np.nan),
+            levels=[0.5, 1.5],
+            colors=['k'],
+            alpha=0.5
+        )
 
-        c2 = ax.contour(grid.X_grid, grid.Y_grid, lon_rho, levels=levels_lon, colors='k', linewidths=0.5)
-        ax.clabel(c2, fmt=lambda v: f"{v:.0f}°E", inline=True, colors='k')
+        # Latitude contours
+        c1 = ax.contour(
+            grid.X_grid,
+            grid.Y_grid,
+            grid.lat_rho,
+            levels=levels_lat,
+            colors='k',
+            linewidths=0.5
+        )
+        ax.clabel(
+            c1,
+            fmt=lambda v: f"{-v:.0f}°S",
+            inline=True,
+            colors='k'
+        )
 
-        ax.axis('equal')
+        # Longitude contours
+        c2 = ax.contour(
+            grid.X_grid,
+            grid.Y_grid,
+            grid.lon_rho,
+            levels=levels_lon,
+            colors='k',
+            linewidths=0.5
+        )
+        ax.clabel(
+            c2,
+            fmt=lambda v: f"{v:.0f}°E",
+            inline=True,
+            colors='k'
+        )
+
         ax.set_xlim(15, grid.X_grid.max())
         ax.set_ylim(grid.Y_grid.min(), grid.Y_grid.max())
         ax.set_xlabel('x (km)', fontsize=11)
+        ax.set_aspect('equal')
 
     axs[0].set_ylabel('y (km)', fontsize=11)
 
-    plt.tight_layout()
-    plt.show()
+    if show:
+        plt.tight_layout()
+        plt.show()
 
     return fig, axs
 

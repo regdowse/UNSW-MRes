@@ -93,6 +93,162 @@ def distribution_plot(df_data, grid):
     return fig, axs
 
 
+# def distribution_plot(
+#     df_data,
+#     grid,
+#     *,
+#     metric='Rc',
+#     vmin=0,
+#     vmax=120,
+#     units='km',
+#     rule='fd',
+#     cbar_loc='right'
+# ):
+
+#     fig, axs = plt.subplots(
+#         1, 3,
+#         figsize=(15, 5),
+#         constrained_layout=True
+#     )
+
+#     # ============================================================
+#     # Panel 1: Eddy tracks + counts
+#     # ============================================================
+
+#     ax = axs[0]
+
+#     cs = ax.contourf(
+#         grid.lon_rho,
+#         grid.lat_rho,
+#         np.where(grid.mask_rho, grid.h / 1e3, np.nan),
+#         cmap='grey'
+#     )
+
+#     fig.colorbar(
+#         cs,
+#         ax=ax,
+#         label='Bathymetry (km)'
+#     )
+
+#     for eddy in df_data.Eddy.unique():
+
+#         d = df_data[df_data.Eddy == eddy]
+#         cyc = d.iloc[0].Cyc
+
+#         ax.plot(
+#             d.lon,
+#             d.lat,
+#             color='r' if cyc == 'AE' else 'b',
+#             lw=1,
+#             alpha=1
+#         )
+
+#     ax.axis('equal')
+#     ax.set_xlim(148, 160)
+#     ax.set_ylim(-40, -26)
+
+#     ax.set_xlabel('Longitude (°E)')
+#     ax.set_ylabel('Latitude (°N)')
+
+#     # ------------------------------------------------------------
+#     # Eddy counts
+#     # ------------------------------------------------------------
+
+#     df_unique = df_data[['Eddy', 'Cyc']].drop_duplicates()
+
+#     in_ax1 = inset_axes(
+#         ax,
+#         width=.4,
+#         height=1,
+#         loc='center',
+#         bbox_to_anchor=(152, -27.5, 0, 0),
+#         bbox_transform=ax.transData,
+#         borderpad=0
+#     )
+
+#     counts = (
+#         df_unique['Cyc']
+#         .value_counts()
+#         .reindex(['AE', 'CE'])
+#         .fillna(0)
+#     )
+
+#     counts.plot(
+#         kind='bar',
+#         color=['r', 'b'],
+#         ax=in_ax1
+#     )
+
+#     in_ax1.set_xlabel('')
+#     in_ax1.set_ylabel('No. eddies')
+#     in_ax1.tick_params(axis='x', rotation=0)
+#     in_ax1.ticklabel_format(
+#         axis='y',
+#         style='sci',
+#         scilimits=(3, 3)
+#     )
+#     in_ax1.set_facecolor('none')
+
+#     # ------------------------------------------------------------
+#     # Eddy-day counts
+#     # ------------------------------------------------------------
+
+#     in_ax2 = inset_axes(
+#         ax,
+#         width=.4,
+#         height=1,
+#         loc='center',
+#         bbox_to_anchor=(149.9, -32.3, 0, 0),
+#         bbox_transform=ax.transData,
+#         borderpad=0
+#     )
+
+#     counts = (
+#         df_data['Cyc']
+#         .value_counts()
+#         .reindex(['AE', 'CE'])
+#         .fillna(0)
+#     )
+
+#     counts.plot(
+#         kind='bar',
+#         color=['r', 'b'],
+#         ax=in_ax2
+#     )
+
+#     in_ax2.set_xlabel('')
+#     in_ax2.set_ylabel('No. eddy-days')
+#     in_ax2.tick_params(axis='x', rotation=0)
+#     in_ax2.ticklabel_format(
+#         axis='y',
+#         style='sci',
+#         scilimits=(3, 3)
+#     )
+#     in_ax2.set_facecolor('none')
+
+#     # ============================================================
+#     # Panels 2–3: Binned median metric
+#     # ============================================================
+
+#     tilt.plot_binned_median_map(
+#         df_data,
+#         grid,
+#         metric=metric,
+#         vmin=vmin,
+#         vmax=vmax,
+#         units=units,
+#         rule=rule,
+#         fig=fig,
+#         axs=axs[1:],
+#         show=False,
+#         cbar_loc=cbar_loc
+#     )
+
+#     plt.show()
+
+#     return fig, axs
+
+
 
 def summary_plot(df_data):
     
