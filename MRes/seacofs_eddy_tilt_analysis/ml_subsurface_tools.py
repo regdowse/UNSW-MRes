@@ -21,10 +21,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-STATIC_FEATURES = ["beta", "h", "Omega", "Rc", "norm_time"]
+STATIC_FEATURES = ["beta", "h"]
 DYNAMIC_FEATURES = [
     "prop_east_km_day", "prop_north_km_day",
-    "ellipse_major_cos2", "ellipse_major_sin2",
+    "ellipse_major_cos2", "ellipse_major_sin2", "Omega", #"Rc", #"norm_time"
 ]
 PV_MAG_FEATURES = ["PV_grad_mag"]
 PV_COMPONENT_FEATURES = ["PV_grad_east", "PV_grad_north"]
