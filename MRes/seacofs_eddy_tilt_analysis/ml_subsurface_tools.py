@@ -21,11 +21,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-STATIC_FEATURES = ["beta", "h", "Omega", "Rc", "AR", "norm_time"]
+STATIC_FEATURES = ["beta", "h", "Omega", "Rc", "norm_time"]
 DYNAMIC_FEATURES = [
     "prop_east_km_day", "prop_north_km_day",
     "ellipse_major_cos2", "ellipse_major_sin2",
-    "Rc_tendency_km_day", "Omega_tendency_day",
 ]
 PV_MAG_FEATURES = ["PV_grad_mag"]
 PV_COMPONENT_FEATURES = ["PV_grad_east", "PV_grad_north"]
@@ -39,7 +38,6 @@ FEATURE_SETS = {
     "PV_magnitude_only": STATIC_FEATURES + DYNAMIC_FEATURES + PV_MAG_FEATURES,
     "PV_components_only": STATIC_FEATURES + DYNAMIC_FEATURES + PV_COMPONENT_FEATURES,
     "full_PV_vector": FEATURES,
-    "full_without_AR": [feature for feature in FEATURES if feature != "AR"],
     "full_without_dynamics": STATIC_FEATURES + PV_MAG_FEATURES + PV_COMPONENT_FEATURES,
 }
 
@@ -95,7 +93,7 @@ def prepare_modelling_table(df: pd.DataFrame) -> pd.DataFrame:
 
     required = {
         "Eddy", "Day", "Cyc", "TiltDis", "TiltDir", "beta", "h",
-        "Omega", "Rc", "AR", "xc", "yc", "q11", "q12", "q22",
+        "Omega", "Rc", "xc", "yc", "q11", "q12", "q22",
         "PV_grad_mag", "PV_grad_theta",
     }
     missing = sorted(required.difference(df.columns))
@@ -111,9 +109,6 @@ def prepare_modelling_table(df: pd.DataFrame) -> pd.DataFrame:
     dt = out.groupby("Eddy")["Day"].diff().astype(float).where(lambda x: x > 0)
     out["prop_east_km_day"] = out.groupby("Eddy")["xc"].diff() / dt
     out["prop_north_km_day"] = out.groupby("Eddy")["yc"].diff() / dt
-    out["Rc_tendency_km_day"] = out.groupby("Eddy")["Rc"].diff() / dt
-    out["Omega_tendency_day"] = out.groupby("Eddy")["Omega"].diff() / dt
-
     sin2, cos2 = _major_axis_encoding(out["q11"], out["q12"], out["q22"])
     out["ellipse_major_sin2"] = sin2
     out["ellipse_major_cos2"] = cos2
@@ -121,11 +116,18 @@ def prepare_modelling_table(df: pd.DataFrame) -> pd.DataFrame:
     pv_theta = np.deg2rad(out["PV_grad_theta"].astype(float))
     out["PV_grad_east"] = out["PV_grad_mag"] * np.sin(pv_theta)
     out["PV_grad_north"] = out["PV_grad_mag"] * np.cos(pv_theta)
+    # Polarity-specific hypothesis: CE tilt is aligned with the PV gradient,
+    # whereas AE tilt is aligned with the direction opposite the PV gradient.
+    out["PV_reference_theta"] = np.where(
+        out["Cyc"].eq("AE"),
+        (out["PV_grad_theta"] + 180.0) % 360.0,
+        out["PV_grad_theta"],
+    )
     tilt_theta = np.deg2rad(out["TiltDir"].astype(float))
     out["TiltEast"] = out["TiltDis"] * np.sin(tilt_theta)
     out["TiltNorth"] = out["TiltDis"] * np.cos(tilt_theta)
     out["LogTiltDis"] = np.log1p(out["TiltDis"].clip(lower=0))
-    delta = np.deg2rad((out["TiltDir"] - out["PV_grad_theta"] + 180.0) % 360.0 - 180.0)
+    delta = np.deg2rad((out["TiltDir"] - out["PV_reference_theta"] + 180.0) % 360.0 - 180.0)
     out["DeltaTiltEast"] = np.sin(delta)
     out["DeltaTiltNorth"] = np.cos(delta)
 
@@ -215,7 +217,7 @@ def prediction_to_components(prediction, metadata, mode):
         return predicted
     distance = np.expm1(np.clip(predicted[:, 0], 0.0, None))
     delta = np.degrees(np.arctan2(predicted[:, 1], predicted[:, 2]))
-    direction = (metadata["PV_grad_theta"].to_numpy(dtype=float) + delta) % 360.0
+    direction = (metadata["PV_reference_theta"].to_numpy(dtype=float) + delta) % 360.0
     theta = np.deg2rad(direction)
     return np.column_stack([distance * np.sin(theta), distance * np.cos(theta)])
 
@@ -275,9 +277,9 @@ def baseline_predictions(train, validation):
     mean_vector = train.groupby("Eddy")[TARGET_COMPONENTS].mean().mean().to_numpy(dtype=float)
     climatology = np.tile(mean_vector, (len(validation), 1))
     distance = float(train.groupby("Eddy")["TiltDis"].median().median())
-    theta = np.deg2rad(validation["PV_grad_theta"].to_numpy(dtype=float))
+    theta = np.deg2rad(validation["PV_reference_theta"].to_numpy(dtype=float))
     pv_direction = np.column_stack([distance * np.sin(theta), distance * np.cos(theta)])
-    return {"Mean-vector baseline": climatology, "PV-direction baseline": pv_direction}
+    return {"Mean-vector baseline": climatology, "Polarity-aligned PV baseline": pv_direction}
 
 
 def evaluate_candidate(candidate, train, validation, features=FEATURES, *, random_state=42):
