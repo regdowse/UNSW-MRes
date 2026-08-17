@@ -109,9 +109,26 @@ def prepare_modelling_table(df: pd.DataFrame) -> pd.DataFrame:
     dt = out.groupby("Eddy")["Day"].diff().astype(float).where(lambda x: x > 0)
     out["prop_east_km_day"] = out.groupby("Eddy")["xc"].diff() / dt
     out["prop_north_km_day"] = out.groupby("Eddy")["yc"].diff() / dt
-    sin2, cos2 = _major_axis_encoding(out["q11"], out["q12"], out["q22"])
-    out["ellipse_major_sin2"] = sin2
-    out["ellipse_major_cos2"] = cos2
+    # sin2, cos2 = _major_axis_encoding(out["q11"], out["q12"], out["q22"])
+    # out["ellipse_major_sin2"] = sin2
+    # out["ellipse_major_cos2"] = cos2
+    # q11, q12 and q22 describe orientation relative to a model grid
+    # rotated 20° clockwise from geographic north.
+    grid_rotation_rad = np.deg2rad(20.0)
+    sin2_grid, cos2_grid = _major_axis_encoding(
+        out["q11"], out["q12"], out["q22"]
+    )
+    # Rotate the doubled-angle representation:
+    # theta_geographic = theta_grid + 20°
+    rotation_2theta = 2.0 * grid_rotation_rad
+    out["ellipse_major_sin2"] = (
+        sin2_grid * np.cos(rotation_2theta)
+        + cos2_grid * np.sin(rotation_2theta)
+    )
+    out["ellipse_major_cos2"] = (
+        cos2_grid * np.cos(rotation_2theta)
+        - sin2_grid * np.sin(rotation_2theta)
+    )
 
     pv_theta = np.deg2rad(out["PV_grad_theta"].astype(float))
     out["PV_grad_east"] = out["PV_grad_mag"] * np.sin(pv_theta)

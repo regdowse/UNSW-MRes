@@ -395,7 +395,7 @@ def shared_bins(*arrays, min_bins: int = 12, max_bins: int = 500):
 
 
 def mirrored_hist(ax, ae, ce, bins, xlabel, *, ylabel="Frequency", colors=("r", "b"),
-                  alpha=.8, xlim=None):
+                  alpha=.8, xlim=None, ):
     """Plot AE above zero and CE below zero using shared bins."""
     if xlim is not None:
         ae = ae[(ae>=xlim[0])&(ae<=xlim[1])]
@@ -480,13 +480,13 @@ def windrose_counts(directions_deg, magnitudes, *, mag_bins, dir_bins=None, dir_
 
 
 def plot_windrose(ax, df: pd.DataFrame, *, title: str = "", mag_bins=(0, 10, 20, 30, 40, np.inf),
-                  colors=None, step=None, rlim=None):
+                  colors=None, step=None, rlim=None, mag='TiltDis', theta='TiltDir'):
     """Draw one stacked tilt windrose."""
 
     if colors is None:
         cmap = "Reds" if df.Cyc.iloc[0] == "AE" else "Blues"
         colors = getattr(plt.cm, cmap)(np.linspace(0.15, 1, len(mag_bins) - 1))
-    data = windrose_counts(df.TiltDir, df.TiltDis, mag_bins=mag_bins)
+    data = windrose_counts(df[theta], df[mag], mag_bins=mag_bins)
     if data is None:
         ax.set_axis_off()
         return ax
@@ -1034,17 +1034,10 @@ def binned_median(x, y, v, xbins, ybins):
     return out
     
 def plot_binned_median_map(
-    # df_eddies,
-   df_data: pd.DataFrame,
+    df_data: pd.DataFrame,
     grid: Grid,
     *,
     metric='Rc',
-    # X_grid=X_grid,
-    # Y_grid=Y_grid,
-    # h=h,
-    # mask_rho=mask_rho,
-    # lat_rho=lat_rho,
-    # lon_rho=lon_rho,
     vmin=0,
     vmax=120,
     rule='fd',
@@ -1119,11 +1112,6 @@ def plot_pv_dominance(
     df: pd.DataFrame,
     grid: Grid,
     *,
-    # df,
-    # X_grid=X_grid,
-    # Y_grid=Y_grid,
-    # h=h,
-    # mask_rho=mask_rho,
     rule='fd',
     figsize=(6, 6),
     clabel='Fraction of eddy-days with $|\\nabla PV_{plan}| < |\\nabla PV_{topo}|$'
