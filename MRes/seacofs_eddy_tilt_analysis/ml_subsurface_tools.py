@@ -421,3 +421,303 @@ def plot_beta_relationship(eddy_table, *, title):
     ax.plot(binned["beta"], binned["tilt"], "o-", color="crimson", label="Decile median")
     ax.set(xlabel="Beta", ylabel="Median tilt magnitude (km)", title=title)
     ax.legend(); fig.tight_layout(); return fig, ax
+
+
+# ---------------------------------------------------------------------------
+# Statistical association workflow
+# ---------------------------------------------------------------------------
+
+ASSOCIATION_DECOMPOSE_FEATURES = [
+    "abs_beta", "Rc", "Omega", "h", "PV_grad_mag",
+    "prop_east_km_day", "prop_north_km_day",
+]
+
+ASSOCIATION_GROUP_PATTERNS = {
+    "structure": ["Rc_", "Omega_", "ellipse_major_"],
+    "environment": ["abs_beta_", "h_"],
+    "beta": ["abs_beta_"],
+    "PV": ["PV_grad_mag_", "PV_grad_unit_"],
+    "propagation": ["prop_east_", "prop_north_"],
+    "ellipse": ["ellipse_major_"],
+}
+
+
+def prepare_association_table(data, *, features=ASSOCIATION_DECOMPOSE_FEATURES):
+    """Create within/between covariates and standardise them within polarity.
+
+    The returned scaling table converts standardised effect-curve axes back to
+    physical units.  Between terms describe differences among eddies; within
+    terms describe day-to-day departures within the same eddy.
+    """
+
+    out = data.copy()
+    out["abs_beta"] = out["beta"].abs()
+    out["log_tilt"] = np.log1p(out["TiltDis"].clip(lower=0))
+    theta = np.deg2rad(out["TiltDir"].astype(float))
+    out["tilt_unit_east"] = np.sin(theta)
+    out["tilt_unit_north"] = np.cos(theta)
+
+    for feature in features:
+        mean = out.groupby("Eddy")[feature].transform("mean")
+        out[f"{feature}_between"] = mean
+        out[f"{feature}_within"] = out[feature] - mean
+
+    scale_rows = []
+    columns = [f"{feature}_{level}" for feature in features for level in ("between", "within")]
+    for column in columns:
+        mean = float(out[column].mean(skipna=True))
+        sd = float(out[column].std(skipna=True))
+        if not np.isfinite(sd) or sd == 0:
+            sd = 1.0
+        out[f"{column}_z"] = (out[column] - mean) / sd
+        scale_rows.append({"column": column, "mean": mean, "sd": sd})
+    return out, pd.DataFrame(scale_rows).set_index("column")
+
+
+def eddy_level_association_table(data):
+    """One robust descriptive row per eddy."""
+
+    work = data.copy()
+    work["abs_beta"] = work["beta"].abs()
+    theta = np.deg2rad(work["TiltDir"].astype(float))
+    work["tilt_sin"] = np.sin(theta)
+    work["tilt_cos"] = np.cos(theta)
+    summary = work.groupby(["Cyc", "Eddy"], as_index=False).agg(
+        tilt_magnitude=("TiltDis", "median"),
+        tilt_sin=("tilt_sin", "mean"), tilt_cos=("tilt_cos", "mean"),
+        abs_beta=("abs_beta", "median"), Rc=("Rc", "median"),
+        Omega=("Omega", "median"), h=("h", "median"),
+        PV_grad_mag=("PV_grad_mag", "median"),
+        prop_east=("prop_east_km_day", "mean"),
+        prop_north=("prop_north_km_day", "mean"),
+        ellipse_cos2=("ellipse_major_cos2", "mean"),
+        ellipse_sin2=("ellipse_major_sin2", "mean"),
+    )
+    summary["tilt_direction"] = (
+        np.degrees(np.arctan2(summary["tilt_sin"], summary["tilt_cos"])) + 360.0
+    ) % 360.0
+    summary["direction_concentration"] = np.hypot(summary["tilt_sin"], summary["tilt_cos"])
+    return summary
+
+
+def cluster_bootstrap_spearman(data, x, y, *, cluster="Eddy", n_boot=1000, random_state=42):
+    """Spearman association with complete-cluster bootstrap confidence interval."""
+
+    clean = data[[cluster, x, y]].dropna()
+    point = float(spearmanr(clean[x], clean[y]).statistic)
+    clusters = clean[cluster].drop_duplicates().to_numpy()
+    by_cluster = {key: part for key, part in clean.groupby(cluster, sort=False)}
+    rng = np.random.default_rng(random_state)
+    boot = np.empty(n_boot)
+    for i in range(n_boot):
+        sampled = rng.choice(clusters, size=len(clusters), replace=True)
+        sample = pd.concat([by_cluster[key] for key in sampled], ignore_index=True)
+        boot[i] = spearmanr(sample[x], sample[y]).statistic
+    return {
+        "x": x, "y": y, "clusters": len(clusters), "spearman_rho": point,
+        "CI_low": float(np.nanpercentile(boot, 2.5)),
+        "CI_high": float(np.nanpercentile(boot, 97.5)),
+    }
+
+
+def eddy_level_spearman_table(eddy_table, predictors, *, response="tilt_magnitude",
+                              n_boot=1000, random_state=42):
+    rows = []
+    for offset, predictor in enumerate(predictors):
+        rows.append(cluster_bootstrap_spearman(
+            eddy_table, predictor, response, cluster="Eddy", n_boot=n_boot,
+            random_state=random_state + offset,
+        ))
+    return pd.DataFrame(rows).set_index("x").sort_values("spearman_rho")
+
+
+def circular_mean_deg(angles):
+    theta = np.deg2rad(np.asarray(angles, dtype=float))
+    return float((np.degrees(np.arctan2(np.nanmean(np.sin(theta)), np.nanmean(np.cos(theta)))) + 360.0) % 360.0)
+
+
+def circular_resultant_length(angles):
+    theta = np.deg2rad(np.asarray(angles, dtype=float))
+    return float(np.hypot(np.nanmean(np.sin(theta)), np.nanmean(np.cos(theta))))
+
+
+def pv_relative_direction_summary(data):
+    """Describe tilt offset from the polarity-specific PV reference by eddy."""
+
+    out = data.copy()
+    out["delta_PV_deg"] = (out["TiltDir"] - out["PV_reference_theta"] + 180.0) % 360.0 - 180.0
+    rows = []
+    for eddy, part in out.groupby("Eddy"):
+        mean_delta = circular_mean_deg(part["delta_PV_deg"])
+        rows.append({
+            "Eddy": eddy, "mean_delta_PV_deg": (mean_delta + 180.0) % 360.0 - 180.0,
+            "PV_alignment_concentration": circular_resultant_length(part["delta_PV_deg"]),
+            "median_tilt_km": part["TiltDis"].median(),
+        })
+    return pd.DataFrame(rows)
+
+
+def _association_group_terms():
+    """Formula terms shared by magnitude and direction GEE models."""
+
+    return {
+        "structure": [
+            "bs(Rc_between_z, df=5)", "bs(Rc_within_z, df=5)",
+            "bs(Omega_between_z, df=5)", "bs(Omega_within_z, df=5)",
+            "ellipse_major_cos2", "ellipse_major_sin2",
+        ],
+        "environment": [
+            "bs(abs_beta_between_z, df=5)", "bs(abs_beta_within_z, df=5)",
+            "bs(h_between_z, df=5)", "bs(h_within_z, df=5)",
+        ],
+        "PV": [
+            "bs(PV_grad_mag_between_z, df=5)", "bs(PV_grad_mag_within_z, df=5)",
+            "PV_grad_unit_east", "PV_grad_unit_north",
+        ],
+        "propagation": [
+            "prop_east_km_day_between_z", "prop_east_km_day_within_z",
+            "prop_north_km_day_between_z", "prop_north_km_day_within_z",
+        ],
+    }
+
+
+def association_gee_formula(response, *, exclude_groups=()):
+    terms = _association_group_terms()
+    rhs = [term for group, group_terms in terms.items()
+           if group not in set(exclude_groups) for term in group_terms]
+    return f"{response} ~ " + " + ".join(rhs)
+
+
+def _formula_columns(formula):
+    """Return raw column names needed after removing formula functions."""
+
+    import re
+    response, rhs = formula.split("~", 1)
+    columns = [response.strip()]
+    for term in rhs.split("+"):
+        term = term.strip()
+        match = re.match(r"bs\(([^,]+)", term)
+        columns.append(match.group(1).strip() if match else term)
+    return list(dict.fromkeys(columns))
+
+
+def fit_clustered_gee(data, response, *, exclude_groups=(), covariance="exchangeable",
+                      maxiter=100):
+    """Fit a spline GEE with eddy-clustered robust uncertainty.
+
+    ``statsmodels`` is imported lazily so the predictive workflow does not
+    require it.  Exchangeable covariance is the default; independence is a
+    useful sensitivity analysis.
+    """
+
+    import statsmodels.formula.api as smf
+    from statsmodels.genmod.cov_struct import Exchangeable, Independence
+    from statsmodels.genmod.families import Gaussian
+
+    formula = association_gee_formula(response, exclude_groups=exclude_groups)
+    required = ["Eddy", *_formula_columns(formula)]
+    fit_data = data[required].replace([np.inf, -np.inf], np.nan).dropna().copy()
+    cov = Exchangeable() if covariance == "exchangeable" else Independence()
+    model = smf.gee(formula, groups="Eddy", data=fit_data,
+                    cov_struct=cov, family=Gaussian())
+    return model.fit(maxiter=maxiter), fit_data
+
+
+def fit_magnitude_gee(data, **kwargs):
+    return fit_clustered_gee(data, "log_tilt", **kwargs)
+
+
+def fit_direction_gee(data, **kwargs):
+    east, east_data = fit_clustered_gee(data, "tilt_unit_east", **kwargs)
+    north, north_data = fit_clustered_gee(data, "tilt_unit_north", **kwargs)
+    return {"east": east, "north": north}, east_data.index.intersection(north_data.index)
+
+
+def gee_group_wald_table(result, *, group_patterns=ASSOCIATION_GROUP_PATTERNS):
+    """Joint robust Wald tests for predeclared feature groups."""
+
+    names = list(result.model.exog_names)
+    rows = []
+    for group, patterns in group_patterns.items():
+        indices = [i for i, name in enumerate(names)
+                   if any(pattern in name for pattern in patterns)]
+        if not indices:
+            continue
+        restriction = np.zeros((len(indices), len(names)))
+        restriction[np.arange(len(indices)), indices] = 1.0
+        test = result.wald_test(restriction, scalar=True)
+        rows.append({
+            "group": group, "parameters_tested": len(indices),
+            "wald_statistic": float(np.asarray(test.statistic).squeeze()),
+            "p_value": float(np.asarray(test.pvalue).squeeze()),
+        })
+    return pd.DataFrame(rows).set_index("group").sort_values("p_value")
+
+
+def direction_group_wald_table(results):
+    east = gee_group_wald_table(results["east"])[["parameters_tested", "wald_statistic", "p_value"]]
+    north = gee_group_wald_table(results["north"])[["parameters_tested", "wald_statistic", "p_value"]]
+    return east.add_prefix("east_").join(north.add_prefix("north_"), how="outer")
+
+
+def gee_effect_curve(result, data, feature_z, *, scaling=None, points=100,
+                     response_transform=None):
+    """Marginal association curve and robust pointwise 95% confidence band."""
+
+    from patsy import build_design_matrices
+
+    needed = [name for name in _formula_columns(result.model.formula) if name != result.model.endog_names]
+    baseline = {column: float(data[column].median()) for column in needed}
+    low, high = data[feature_z].quantile([0.02, 0.98])
+    curve = pd.DataFrame([baseline] * points)
+    curve[feature_z] = np.linspace(low, high, points)
+    design = np.asarray(build_design_matrices(
+        [result.model.data.design_info], curve, return_type="dataframe"
+    )[0], dtype=float)
+    predicted = design @ np.asarray(result.params, dtype=float)
+    covariance = np.asarray(result.cov_params(), dtype=float)
+    standard_error = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", design, covariance, design), 0.0))
+    lower, upper = predicted - 1.96 * standard_error, predicted + 1.96 * standard_error
+    if response_transform:
+        predicted, lower, upper = map(response_transform, (predicted, lower, upper))
+    curve["prediction"] = predicted
+    curve["CI_low"] = lower
+    curve["CI_high"] = upper
+    curve["feature_z"] = curve[feature_z]
+    original = feature_z.removesuffix("_z")
+    if scaling is not None and original in scaling.index:
+        curve["feature_value"] = curve["feature_z"] * scaling.loc[original, "sd"] + scaling.loc[original, "mean"]
+    else:
+        curve["feature_value"] = curve["feature_z"]
+    return curve[["feature_value", "feature_z", "prediction", "CI_low", "CI_high"]]
+
+
+def direction_effect_curve(results, data, feature_z, *, scaling=None, points=100):
+    east = gee_effect_curve(results["east"], data, feature_z, scaling=scaling, points=points)
+    north = gee_effect_curve(results["north"], data, feature_z, scaling=scaling, points=points)
+    out = east[["feature_value", "feature_z"]].copy()
+    out["predicted_east"] = east["prediction"]
+    out["predicted_north"] = north["prediction"]
+    out["predicted_direction"] = (
+        np.degrees(np.arctan2(out["predicted_east"], out["predicted_north"])) + 360.0
+    ) % 360.0
+    out["predicted_concentration"] = np.hypot(out["predicted_east"], out["predicted_north"])
+    return out
+
+
+def plot_association_curve(curve, *, xlabel, ylabel, title):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(curve["feature_value"], curve["prediction"], color="crimson", lw=2)
+    ax.fill_between(curve["feature_value"], curve["CI_low"], curve["CI_high"],
+                    color="crimson", alpha=0.2, linewidth=0)
+    ax.set(xlabel=xlabel, ylabel=ylabel, title=title)
+    fig.tight_layout(); return fig, ax
+
+
+def plot_direction_effect_curve(curve, *, xlabel, title):
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes[0].plot(curve["feature_value"], curve["predicted_direction"], color="darkorange", lw=2)
+    axes[0].set(xlabel=xlabel, ylabel="Predicted direction (degrees)", ylim=(0, 360))
+    axes[1].plot(curve["feature_value"], curve["predicted_concentration"], color="teal", lw=2)
+    axes[1].set(xlabel=xlabel, ylabel="Predicted concentration")
+    fig.suptitle(title); fig.tight_layout(); return fig, axes
