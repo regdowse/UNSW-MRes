@@ -1320,3 +1320,40 @@ def circular_mean_deg_true_north(deg):
 
     return np.rad2deg(np.arctan2(S, C)) % 360
 
+def tilt_t(df_data, add_field='PV_grad_mag', field_label='PV grad.',
+           figsize=(10,20), nlargest=10, width_ratios=[3, 1]):
+
+    eddy_ids = df_data.groupby('Eddy').Age.max().nlargest(nlargest).index
+    
+    fig, axs = plt.subplots(
+        nlargest, 2,
+        figsize=figsize,
+        gridspec_kw={'width_ratios': width_ratios}
+    )
+    
+    for e, eddy in enumerate(eddy_ids):
+        df = df_data[df_data.Eddy == eddy].copy()
+        t = df.Day - df.Day.iloc[0]
+    
+        # Tilt + PV gradient
+        ax = axs[e, 0]
+        ax.plot(t, df.TiltDis)
+        ax.set_ylabel('Tilt (km)')
+    
+        ax2 = ax.twinx()
+        ax2.plot(t, df[add_field], 'r')
+        ax2.set_ylabel(field_label, color='r')
+        ax2.tick_params(axis='y', labelcolor='r')
+    
+        # Eddy trajectory
+        ax = axs[e, 1]
+        ax.contourf(grid.X_grid, grid.Y_grid, np.where(grid.mask_rho, grid.h, np.nan), cmap='Grays_r')
+        ax.plot(df.xc, df.yc, color='magenta')
+        ax.axis('equal')
+        ax.set_title(f'Eddy {eddy} — {df.Age.max():.0f} days')
+    
+    axs[-1, 0].set_xlabel('Eddy age (days)')
+    axs[-1, 1].set_xlabel('x')
+    
+    plt.tight_layout()
+    return fig, axs
