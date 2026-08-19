@@ -4,6 +4,7 @@ This folder separates the expensive model-data processing from the statistical n
 
 Files:
 
+- `01_build_background_cache.ipynb`: brief Jupyter launcher with an editable worker count.
 - `background_flow_tools.py`: one-pass, restartable, file-parallel background-flow cache builder.
 - `build_background_cache.py`: command-line entry point for a Katana batch job.
 - `background_relative_beta_effect.ipynb`: residual propagation, vorticity-budget, and tilt tests.
