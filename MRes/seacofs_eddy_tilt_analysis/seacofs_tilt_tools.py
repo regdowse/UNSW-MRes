@@ -102,7 +102,7 @@ def load_grid(grid_path: Path | str = DEFAULT_GRID_PATH, z_r_path: Path | str = 
     h = np.transpose(dataset.variables["h"], axes=(1, 0))
     f = np.transpose(dataset.variables["f"], axes=(1, 0))
     angle = float(dataset.variables["angle"][0, 0])
-    z_r = np.transpose(np.load(z_r_path), (1, 2, 0))
+    z_r = np.load(z_r_path) #np.transpose(np.load(z_r_path), (1, 2, 0))
 
     j_mid = lon_rho.shape[1] // 2
     i_mid = lon_rho.shape[0] // 2
