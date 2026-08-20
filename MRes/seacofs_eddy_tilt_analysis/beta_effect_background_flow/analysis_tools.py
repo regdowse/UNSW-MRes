@@ -12,6 +12,8 @@ METHODS = {
     "ann_500": ("ann_500_east_ms", "ann_500_north_ms"),
     "clim_surface": ("clim_surface_east_ms", "clim_surface_north_ms"),
     "clim_500": ("clim_500_east_ms", "clim_500_north_ms"),
+    "full_surface": ("full_surface_east_ms", "full_surface_north_ms"),
+    "full_500": ("full_500_east_ms", "full_500_north_ms"),
 }
 
 
@@ -33,12 +35,12 @@ def add_track_velocity(df, grid_angle, window=5):
     """Add smoothed geographic track velocities from rotated-grid xc/yc."""
 
     out = df.sort_values(["Eddy", "Day"]).copy()
-    out["dxc_km_day"] = out.groupby("Eddy", group_keys=False).apply(
-        lambda part: _smoothed_rate(part, "xc", window)
-    )
-    out["dyc_km_day"] = out.groupby("Eddy", group_keys=False).apply(
-        lambda part: _smoothed_rate(part, "yc", window)
-    )
+    out["dxc_km_day"] = np.nan
+    out["dyc_km_day"] = np.nan
+    for indices in out.groupby("Eddy", sort=False).groups.values():
+        part = out.loc[indices]
+        out.loc[indices, "dxc_km_day"] = _smoothed_rate(part, "xc", window)
+        out.loc[indices, "dyc_km_day"] = _smoothed_rate(part, "yc", window)
     alpha = float(grid_angle)
     out["track_east_ms"] = (
         out["dxc_km_day"] * np.cos(alpha) - out["dyc_km_day"] * np.sin(alpha)
