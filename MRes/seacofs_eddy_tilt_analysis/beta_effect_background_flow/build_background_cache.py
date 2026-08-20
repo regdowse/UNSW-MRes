@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 import sys
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parentelected = eddies.copy()
 ANALYSIS_ROOT = HERE.parent
 if str(ANALYSIS_ROOT) not in sys.path:
     sys.path.insert(0, str(ANALYSIS_ROOT))
@@ -27,7 +27,7 @@ def main():
     grid = tilt.load_grid(paths.grid, paths.z_r)
     eddies, _ = tilt.load_tilt_tables(paths)
     eddies = tilt.add_pv_gradient_terms(eddies, grid)
-    eddies = eddies[eddies["topo_plan_ratio"] < 0].copy()
+    # eddies = eddies[eddies["topo_plan_ratio"] < 0].copy()
 
     config = BackgroundConfig(
         depth_max_m=args.depth_max,
