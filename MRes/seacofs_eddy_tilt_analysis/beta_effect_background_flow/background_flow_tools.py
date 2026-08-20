@@ -269,6 +269,22 @@ def reduce_monthly_climatology(partial_paths, output_path):
         suffix: np.divide(total, counts[suffix], out=np.full_like(total, np.nan), where=counts[suffix] > 0)
         for suffix, total in totals.items()
     }
+    # Also form an exact full-archive mean from the original sums and counts.
+    # This is count-weighted, rather than an unweighted mean of twelve monthly
+    # means, so unequal month lengths and missing values are handled correctly.
+    for name in FIELD_NAMES:
+        month_keys = [f"m{month:02d}_{name}" for month in range(1, 13)]
+        available = [key for key in month_keys if key in totals]
+        if not available:
+            continue
+        annual_total = sum((totals[key] for key in available), start=np.zeros_like(totals[available[0]]))
+        annual_count = sum((counts[key] for key in available), start=np.zeros_like(counts[available[0]]))
+        climatology[f"full_{name}"] = np.divide(
+            annual_total,
+            annual_count,
+            out=np.full_like(annual_total, np.nan),
+            where=annual_count > 0,
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output_path, **climatology)
     return climatology
@@ -288,6 +304,10 @@ def attach_climatology(annulus_table, climatology):
         component = "east" if name.startswith("u_") else "north"
         level = "surface" if name.endswith("surface") else "500"
         out[f"clim_{level}_{component}_ms"] = values
+        full_field = climatology[f"full_{name}"]
+        out[f"full_{level}_{component}_ms"] = full_field[
+            out["ic"].astype(int), out["jc"].astype(int)
+        ]
     return out
 
 
