@@ -21,7 +21,7 @@ def main():
     defaults = N2CacheConfig()
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--horizontal-chunk", type=int, default=64)
+    parser.add_argument("--point-batch-size", type=int, default=128)
     parser.add_argument("--model-root", type=Path, default=defaults.model_root)
     parser.add_argument("--output", type=Path, default=defaults.output_path)
     parser.add_argument("--overwrite-partitions", action="store_true")
@@ -33,7 +33,7 @@ def main():
         model_root=args.model_root,
         output_path=args.output,
         workers=args.workers,
-        horizontal_chunk=args.horizontal_chunk,
+        point_batch_size=args.point_batch_size,
         skip_existing=not args.overwrite_partitions,
     )
     print(args.output)
