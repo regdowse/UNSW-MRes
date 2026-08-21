@@ -229,9 +229,12 @@ class N2CacheConfig:
     model_root: Path = Path("/srv/scratch/z3533156/26year_BRAN2020")
     output_path: Path = Path(
         "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-        "tilt_mechanisms/n2_eddy_day_v2.parquet"
+        "tilt_mechanisms/n2_eddy_day_v3_core.parquet"
     )
-    z_r_path: Path = Path("/srv/scratch/z5297792/z_r.npy")
+    grid_path: Path = Path("/srv/scratch/z3533156/26year_BRAN2020/outer_avg_01461.nc")
+    z_r_path: Path = Path(
+        "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset_modular/z_r.npy"
+    )
     depths: tuple[int, ...] = (200, 500)
     rho0: float = 1025.0
     point_batch_size: int = 128
@@ -297,6 +300,37 @@ def _align_z_to_roms_levels(z_columns, sigma_coordinate=None):
     return z
 
 
+def _load_core_grid(grid_path):
+    """Load the separable kilometre grid and ocean mask used by core means."""
+
+    import netCDF4 as nc
+    from seacofs_tilt_tools import distance_km
+
+    with nc.Dataset(grid_path) as dataset:
+        lon = np.transpose(dataset.variables["lon_rho"][:], axes=(1, 0))
+        lat = np.transpose(dataset.variables["lat_rho"][:], axes=(1, 0))
+        mask = np.transpose(dataset.variables["mask_rho"][:], axes=(1, 0)).astype(bool)
+    j_mid = lon.shape[1] // 2
+    i_mid = lon.shape[0] // 2
+    x = np.insert(np.cumsum(distance_km(
+        lat[:-1, j_mid], lon[:-1, j_mid], lat[1:, j_mid], lon[1:, j_mid]
+    )), 0, 0.0)
+    y = np.insert(np.cumsum(distance_km(
+        lat[i_mid, :-1], lon[i_mid, :-1], lat[i_mid, 1:], lon[i_mid, 1:]
+    )), 0, 0.0)
+    return x, y, mask
+
+
+def _eddy_core_indices(row, x_grid, y_grid, ocean_mask):
+    """Return grid indices inside the compute_core_mean elliptical contour."""
+
+    from types import SimpleNamespace
+    from seacofs_tilt_tools import core_grid_indices
+
+    grid = SimpleNamespace(x_grid=x_grid, y_grid=y_grid, mask_rho=ocean_mask)
+    return core_grid_indices(row, grid, circle_region_flag=False)
+
+
 def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
     """Calculate all requested eddy columns in one model file and partition."""
 
@@ -308,7 +342,8 @@ def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
     if config.skip_existing and partition.exists():
         return str(partition), "cached"
 
-    rows = file_rows[["Eddy", "Day", "ic", "jc"]].copy()
+    geometry = ["Eddy", "Day", "ic", "jc", "xc", "yc", "Rc", "q11", "q12", "q22"]
+    rows = file_rows[geometry].copy()
     rows["Day"] = rows["Day"].round().astype(int)
     rows["ic"] = rows["ic"].astype(int)
     rows["jc"] = rows["jc"].astype(int)
@@ -317,6 +352,7 @@ def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
     # z_r.npy uses the existing project convention x/y/sigma after transpose
     # and is memory-mapped separately by each worker rather than copied.
     z_r = np.transpose(np.load(config.z_r_path, mmap_mode="r"), (1, 2, 0))
+    x_grid, y_grid, ocean_mask = _load_core_grid(config.grid_path)
     with xr.open_dataset(model_path, chunks=None, cache=False) as raw:
         for variable in ("temp", "salt"):
             if variable not in raw:
@@ -328,24 +364,23 @@ def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
         time_for_day = {int(day): t for t, day in enumerate(model_days)}
         sigma_coordinate = raw[vertical_dim].values if vertical_dim in raw.coords else None
 
-        for day, day_rows in rows.groupby("Day", sort=False):
-            if int(day) not in time_for_day:
-                raise KeyError(f"Day {day} was assigned to {model_path.name} but is absent from ocean_time.")
-            # Vectorized point reads avoid constructing a full-domain xgcm grid.
-            # Batching protects backends that limit advanced-index request size.
-            for start in range(0, len(day_rows), config.point_batch_size):
-                batch = day_rows.iloc[start:start + config.point_batch_size]
-                ic = batch["ic"].to_numpy(int)
-                jc = batch["jc"].to_numpy(int)
-                xi = xr.DataArray(ic, dims="point")
-                eta = xr.DataArray(jc, dims="point")
+        def calculate_points(day, ic, jc):
+            """Return depth means for arbitrary columns on one model day."""
+
+            ic = np.asarray(ic, dtype=int)
+            jc = np.asarray(jc, dtype=int)
+            values = {int(depth): np.full(len(ic), np.nan) for depth in config.depths}
+            for start in range(0, len(ic), config.point_batch_size):
+                stop = min(start + config.point_batch_size, len(ic))
+                xi = xr.DataArray(ic[start:stop], dims="point")
+                eta = xr.DataArray(jc[start:stop], dims="point")
                 selector = {"ocean_time": time_for_day[int(day)], "xi_rho": xi, "eta_rho": eta}
                 selected = raw[["temp", "salt"]].isel(selector).load()
                 temp = selected["temp"].transpose("point", vertical_dim).values.astype(float)
                 salt = selected["salt"].transpose("point", vertical_dim).values.astype(float)
                 temp[np.abs(temp) > 1e30] = np.nan
                 salt[np.abs(salt) > 1e30] = np.nan
-                z_values = np.asarray(z_r[ic, jc, :], float)
+                z_values = np.asarray(z_r[ic[start:stop], jc[start:stop], :], float)
                 z_values = _align_z_to_roms_levels(z_values, sigma_coordinate)
                 if z_values.shape != temp.shape:
                     raise ValueError(
@@ -353,14 +388,56 @@ def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
                     )
                 rho = np.asarray(xroms.density(temp, salt, z=z_values), float)
                 n2_values, z_mid = _n2_from_density(rho, z_values, config.rho0)
-                means = _depth_means(n2_values, z_mid, config.depths)
-                for position, row in enumerate(batch.itertuples(index=False)):
-                    record = {"Eddy": row.Eddy, "Day": int(day)}
-                    for depth in config.depths:
-                        record[f"N2_{int(depth)}m_s2"] = means[int(depth)][position]
-                    output.append(record)
+                batch_means = _depth_means(n2_values, z_mid, config.depths)
+                for depth in config.depths:
+                    values[int(depth)][start:stop] = batch_means[int(depth)]
+            return values
 
-    columns = ["Eddy", "Day"] + [f"N2_{int(depth)}m_s2" for depth in config.depths]
+        for day, day_rows in rows.groupby("Day", sort=False):
+            if int(day) not in time_for_day:
+                raise KeyError(f"Day {day} was assigned to {model_path.name} but is absent from ocean_time.")
+            day_rows = day_rows.reset_index(drop=True)
+            core_ic, core_jc, owners = [], [], []
+            core_sizes = np.zeros(len(day_rows), dtype=int)
+            for position, row in enumerate(day_rows.itertuples(index=False)):
+                ii, jj = _eddy_core_indices(row, x_grid, y_grid, ocean_mask)
+                core_sizes[position] = len(ii)
+                core_ic.extend(ii)
+                core_jc.extend(jj)
+                owners.extend([position] * len(ii))
+
+            core_values = calculate_points(day, core_ic, core_jc)
+            centre_values = calculate_points(
+                day, day_rows["ic"].to_numpy(int), day_rows["jc"].to_numpy(int)
+            )
+            owners = np.asarray(owners, dtype=int)
+            for position, row in enumerate(day_rows.itertuples(index=False)):
+                record = {
+                    "Eddy": row.Eddy,
+                    "Day": int(day),
+                    "N2_core_cells": int(core_sizes[position]),
+                }
+                for depth in config.depths:
+                    depth = int(depth)
+                    core = core_values[depth][owners == position]
+                    valid = np.isfinite(core)
+                    record[f"N2_{depth}m_core_s2"] = float(np.nanmean(core)) if valid.any() else np.nan
+                    record[f"N2_{depth}m_core_std_s2"] = float(np.nanstd(core)) if valid.any() else np.nan
+                    record[f"N2_{depth}m_core_valid_cells"] = int(valid.sum())
+                    record[f"N2_{depth}m_core_valid_fraction"] = (
+                        float(valid.mean()) if len(valid) else np.nan
+                    )
+                    record[f"N2_{depth}m_centre_s2"] = centre_values[depth][position]
+                output.append(record)
+
+    columns = ["Eddy", "Day", "N2_core_cells"]
+    for depth in config.depths:
+        depth = int(depth)
+        columns.extend([
+            f"N2_{depth}m_core_s2", f"N2_{depth}m_core_std_s2",
+            f"N2_{depth}m_core_valid_cells", f"N2_{depth}m_core_valid_fraction",
+            f"N2_{depth}m_centre_s2",
+        ])
     table = pd.DataFrame(output, columns=columns).sort_values(["Eddy", "Day"])
     _atomic_parquet(table, partition)
     return str(partition), "computed"
@@ -375,6 +452,7 @@ def build_n2_cache_xroms(
     rho0=1025.0,
     workers=4,
     point_batch_size=128,
+    grid_path: Path | str | None = None,
     z_r_path: Path | str | None = None,
     skip_existing=True,
 ):
@@ -390,7 +468,7 @@ def build_n2_cache_xroms(
     from joblib import Parallel, delayed
     from beta_effect_background_flow.background_flow_tools import model_file_for_day
 
-    required = {"Eddy", "Day", "ic", "jc"}
+    required = {"Eddy", "Day", "ic", "jc", "xc", "yc", "Rc", "q11", "q12", "q22"}
     missing = required - set(eddies.columns)
     if missing:
         raise KeyError(f"Missing N2 extraction columns: {sorted(missing)}")
@@ -402,13 +480,14 @@ def build_n2_cache_xroms(
     config = N2CacheConfig(
         model_root=Path(model_root) if model_root is not None else defaults.model_root,
         output_path=Path(output_path) if output_path is not None else defaults.output_path,
+        grid_path=Path(grid_path) if grid_path is not None else defaults.grid_path,
         z_r_path=Path(z_r_path) if z_r_path is not None else defaults.z_r_path,
         depths=tuple(int(depth) for depth in depths),
         rho0=float(rho0),
         point_batch_size=int(point_batch_size),
         skip_existing=bool(skip_existing),
     )
-    work = eddies[["Eddy", "Day", "ic", "jc"]].dropna().drop_duplicates(["Eddy", "Day"]).copy()
+    work = eddies[sorted(required)].dropna().drop_duplicates(["Eddy", "Day"]).copy()
     work["model_file"] = work["Day"].map(
         lambda day: model_file_for_day(int(round(day)), config.model_root)
     )

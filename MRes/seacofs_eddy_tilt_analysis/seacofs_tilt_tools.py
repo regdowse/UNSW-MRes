@@ -897,6 +897,42 @@ def match_old_eddies(sample_eddies_old, df_eddies_old, df_eddies, min_overlap_fr
             matches.append({"old_eddy": eddy_old, "new_eddy": np.nan, "overlap_frac": 0.0, "mean_dist_km": np.nan, "n_overlap": 0})
     return pd.DataFrame(matches)
 
+def core_grid_indices(row, grid: Grid, circle_region_flag: bool = False):
+    """Return ocean-grid indices inside an eddy's core contour."""
+
+    if circle_region_flag:
+        if not (hasattr(row, "rmax") and np.isfinite(row.rmax) and row.rmax > 0):
+            return np.array([], dtype=int), np.array([], dtype=int)
+        q = np.eye(2)
+        threshold = float(row.rmax) ** 2
+    else:
+        if hasattr(row, "q11") and np.isfinite(row.q11):
+            q = np.array([[row.q11, row.q12], [row.q12, row.q22]], dtype=float)
+        elif hasattr(row, "Q"):
+            q = np.asarray(row.Q, dtype=float)
+        else:
+            return np.array([], dtype=int), np.array([], dtype=int)
+        if q.shape != (2, 2) or not np.isfinite(q).all() or not np.isfinite(row.Rc) or row.Rc <= 0:
+            return np.array([], dtype=int), np.array([], dtype=int)
+        threshold = float(row.Rc) ** 2 / 2.0
+    eigenvalues = np.linalg.eigvalsh(q)
+    if not np.isfinite(eigenvalues).all() or eigenvalues.min() <= 0:
+        return np.array([], dtype=int), np.array([], dtype=int)
+    radius = np.sqrt(threshold / eigenvalues.min())
+    i0 = max(0, int(np.searchsorted(grid.x_grid, row.xc - radius, side="left")))
+    i1 = min(len(grid.x_grid), int(np.searchsorted(grid.x_grid, row.xc + radius, side="right")))
+    j0 = max(0, int(np.searchsorted(grid.y_grid, row.yc - radius, side="left")))
+    j1 = min(len(grid.y_grid), int(np.searchsorted(grid.y_grid, row.yc + radius, side="right")))
+    if i0 >= i1 or j0 >= j1:
+        return np.array([], dtype=int), np.array([], dtype=int)
+    ii, jj = np.meshgrid(np.arange(i0, i1), np.arange(j0, j1), indexing="ij")
+    dx = grid.x_grid[ii] - float(row.xc)
+    dy = grid.y_grid[jj] - float(row.yc)
+    rho2 = q[0, 0] * dx**2 + 2.0 * q[0, 1] * dx * dy + q[1, 1] * dy**2
+    use = (rho2 <= threshold) & grid.mask_rho[ii, jj].astype(bool)
+    return ii[use].astype(int), jj[use].astype(int)
+
+
 def compute_core_mean(
     df_data: pd.DataFrame,
     grid: Grid,
@@ -933,37 +969,14 @@ def compute_core_mean(
         df_loc = df_loc.copy().reset_index(drop=False)
         core_vals = np.full(len(df_loc), np.nan)
         for idx, row in enumerate(df_loc.itertuples(index=False)):
-            dx = grid.X_grid - row.xc
-            dy = grid.Y_grid - row.yc
-            if circle_region_flag:
-                if hasattr(row, 'rmax') and np.isfinite(row.rmax):
-                    rho2 = (dx**2 + dy**2)
-                    core_mask = rho2 <= row.rmax**2
-                else:
-                    rho2 = np.full_like(dx, np.nan, dtype=float)
-            else:
-                if hasattr(row, 'q11') and np.isfinite(row.q11):
-                    rho2 = (
-                        row.q11 * dx**2
-                        + 2 * row.q12 * dx * dy
-                        + row.q22 * dy**2
-                    )
-                elif isinstance(row.Q, np.ndarray) and row.Q.shape == (2, 2) and np.isfinite(row.Q).all():
-                    rho2 = (
-                        row.Q[0, 0] * dx**2
-                        + 2 * row.Q[1, 0] * dx * dy
-                        + row.Q[1, 1] * dy**2
-                    )
-                else:
-                    rho2 = np.full_like(dx, np.nan, dtype=float)
-                core_mask = rho2 <= row.Rc**2 / 2
-            if not core_mask.any():
+            ii, jj = core_grid_indices(row, grid, circle_region_flag=circle_region_flag)
+            if not len(ii):
                 continue
             if mode_2d:
-                vals = field2d[core_mask]
+                vals = field2d[ii, jj]
             else:
                 t_idx = int(row.Day - base_day)
-                vals = data3d[:, :, t_idx][core_mask]
+                vals = data3d[ii, jj, t_idx]
             core_vals[idx] = np.nanmean(vals)
         chunks.append(pd.DataFrame({
             "Eddy": df_loc["Eddy"].to_numpy(),

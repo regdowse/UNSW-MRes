@@ -12,7 +12,11 @@ Run order:
 6. `05_wind_ekman_sensitivity.ipynb` (optional; requires a wind-stress cache)
 7. `06_joint_mechanism_comparison.ipynb`
 
-The stratification cache is file-parallel and restartable. It can be run from
+The stratification cache is file-parallel and restartable. For every eddy-day,
+it calculates depth-mean N2 at each ocean grid column inside the same
+elliptical maximum-tangential-velocity contour used by `compute_core_mean`,
+then takes the unweighted core mean. Centre-column values and core coverage
+diagnostics are retained for sensitivity and quality control. It can be run from
 the notebook or from Katana with:
 
 ```bash
@@ -20,7 +24,7 @@ python build_stratification_cache.py --workers 5 --point-batch-size 128
 ```
 
 Start with 4–8 workers and check job memory before increasing concurrency.
-The point batch size controls vectorized column reads and is not a Dask grid
+The point batch size controls vectorized core-column reads and is not a Dask grid
 chunk; the calculation never constructs full-domain xgcm metrics.
 Each completed ROMS file is written to a cache-versioned partition folder;
 reruns skip those partitions unless `--overwrite-partitions` is supplied.
