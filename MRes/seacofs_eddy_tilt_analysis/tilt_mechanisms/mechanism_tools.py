@@ -351,7 +351,8 @@ def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
     output = []
     # z_r.npy uses the existing project convention x/y/sigma after transpose
     # and is memory-mapped separately by each worker rather than copied.
-    z_r = np.transpose(np.load(config.z_r_path, mmap_mode="r"), (1, 2, 0))
+    # z_r = np.transpose(np.load(config.z_r_path, mmap_mode="r"), (1, 2, 0))
+    z_r = np.load(config.z_r_path, mmap_mode="r")
     x_grid, y_grid, ocean_mask = _load_core_grid(config.grid_path)
     with xr.open_dataset(model_path, chunks=None, cache=False) as raw:
         for variable in ("temp", "salt"):
