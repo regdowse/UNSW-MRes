@@ -12,6 +12,17 @@ Run order:
 6. `05_wind_ekman_sensitivity.ipynb` (optional; requires a wind-stress cache)
 7. `06_joint_mechanism_comparison.ipynb`
 
+The stratification cache is file-parallel and restartable. It can be run from
+the notebook or from Katana with:
+
+```bash
+python build_stratification_cache.py --workers 8 --horizontal-chunk 64
+```
+
+Start with 4–8 workers and check job memory before increasing concurrency.
+Each completed ROMS file is written to `n2_file_partitions/`; reruns skip those
+partitions unless `--overwrite-partitions` is supplied.
+
 `mechanism_tools.py` contains only helpers unique to this workflow. The notebooks reuse `seacofs_tilt_tools.py`, `ml_subsurface_tools.py`, and `beta_effect_background_flow/*` for existing functionality.
 
 The notebooks assume they are launched with this directory as the working directory on Katana. Cache paths are declared near the top of the relevant notebooks.

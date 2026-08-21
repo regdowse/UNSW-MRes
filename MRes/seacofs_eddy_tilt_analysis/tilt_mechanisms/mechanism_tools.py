@@ -8,6 +8,8 @@ and background-flow calculations.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import os
 from pathlib import Path
 
 import numpy as np
@@ -198,28 +200,133 @@ def _day_values(time):
     return values.astype(float) / scale
 
 
-def _column_depth_mean(n2_column, z_column, max_depth):
-    n2 = np.asarray(n2_column, float)
-    z = np.asarray(z_column, float)
-    use = np.isfinite(n2) & np.isfinite(z) & (z <= 0) & (z >= -float(max_depth))
-    if use.sum() < 2:
-        return np.nan
-    order = np.argsort(z[use])
-    zz = z[use][order]
-    nn = n2[use][order]
-    span = zz[-1] - zz[0]
-    return float(np.trapz(nn, zz) / span) if span > 0 else np.nan
+def _depth_means(n2_columns, z_columns, depths):
+    """Depth-average point columns; input arrays have shape point x vertical."""
+
+    n2_columns = np.asarray(n2_columns, float)
+    z_columns = np.asarray(z_columns, float)
+    if n2_columns.shape != z_columns.shape or n2_columns.ndim != 2:
+        raise ValueError("N2 and z must be matching point-by-vertical arrays.")
+    output = {int(depth): np.full(n2_columns.shape[0], np.nan) for depth in depths}
+    for point, (n2, z) in enumerate(zip(n2_columns, z_columns)):
+        for depth in depths:
+            use = np.isfinite(n2) & np.isfinite(z) & (z <= 0) & (z >= -float(depth))
+            if use.sum() < 2:
+                continue
+            order = np.argsort(z[use])
+            zz = z[use][order]
+            nn = n2[use][order]
+            span = zz[-1] - zz[0]
+            if span > 0:
+                output[int(depth)][point] = np.trapz(nn, zz) / span
+    return output
+
+
+@dataclass(frozen=True)
+class N2CacheConfig:
+    """Runtime and restart settings for the file-parallel N2 cache."""
+
+    model_root: Path = Path("/srv/scratch/z3533156/26year_BRAN2020")
+    output_path: Path = Path(
+        "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
+        "tilt_mechanisms/n2_eddy_day.parquet"
+    )
+    depths: tuple[int, ...] = (200, 500)
+    rho0: float = 1025.0
+    horizontal_chunk: int = 64
+    skip_existing: bool = True
+
+    @property
+    def partition_root(self):
+        return self.output_path.parent / "n2_file_partitions"
+
+
+def _n2_partition_path(model_path, config):
+    return config.partition_root / f"{Path(model_path).stem}.parquet"
+
+
+def _atomic_parquet(table, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f".tmp-{os.getpid()}.parquet")
+    table.to_parquet(temporary, index=False)
+    os.replace(temporary, path)
+
+
+def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
+    """Calculate all requested eddy columns in one model file and partition."""
+
+    import xarray as xr
+    import xroms
+
+    model_path = Path(model_path)
+    partition = _n2_partition_path(model_path, config)
+    if config.skip_existing and partition.exists():
+        return str(partition), "cached"
+
+    rows = file_rows[["Eddy", "Day", "ic", "jc"]].copy()
+    rows["Day"] = rows["Day"].round().astype(int)
+    rows["ic"] = rows["ic"].astype(int)
+    rows["jc"] = rows["jc"].astype(int)
+    rows = rows.drop_duplicates(["Eddy", "Day"])
+    output = []
+    chunks = {
+        "ocean_time": 1,
+        "s_rho": -1,
+        "eta_rho": config.horizontal_chunk,
+        "xi_rho": config.horizontal_chunk,
+    }
+    with xr.open_dataset(model_path, chunks=chunks) as raw:
+        ds, xgrid = xroms.roms_dataset(raw)
+        rho = xroms.density(ds["temp"], ds["salt"])
+        n2 = xroms.N2(rho, xgrid, rho0=config.rho0)
+        z = n2.coords.get("z_w", ds.get("z_w"))
+        if z is None:
+            raise KeyError("xroms did not provide z_w for the N2 field.")
+        vertical_dims = [dim for dim in n2.dims if dim.startswith("s_")]
+        if len(vertical_dims) != 1:
+            raise ValueError(f"Expected one N2 vertical dimension, found {vertical_dims}.")
+        vertical_dim = vertical_dims[0]
+        model_days = np.rint(_day_values(ds["ocean_time"])).astype(int)
+        time_for_day = {int(day): t for t, day in enumerate(model_days)}
+
+        for day, day_rows in rows.groupby("Day", sort=False):
+            if int(day) not in time_for_day:
+                raise KeyError(f"Day {day} was assigned to {model_path.name} but is absent from ocean_time.")
+            # One vectorized point selection and one dask compute per timestep.
+            xi = xr.DataArray(day_rows["ic"].to_numpy(), dims="point")
+            eta = xr.DataArray(day_rows["jc"].to_numpy(), dims="point")
+            selector = {"ocean_time": time_for_day[int(day)], "xi_rho": xi, "eta_rho": eta}
+            selected = xr.Dataset({"N2": n2.isel(selector), "z": z.isel(selector)}).compute(
+                scheduler="synchronous"
+            )
+            n2_values = selected["N2"].transpose("point", vertical_dim).values
+            z_values = selected["z"].transpose("point", vertical_dim).values
+            means = _depth_means(n2_values, z_values, config.depths)
+            for position, row in enumerate(day_rows.itertuples(index=False)):
+                record = {"Eddy": row.Eddy, "Day": int(day)}
+                for depth in config.depths:
+                    record[f"N2_{int(depth)}m_s2"] = means[int(depth)][position]
+                output.append(record)
+
+    columns = ["Eddy", "Day"] + [f"N2_{int(depth)}m_s2" for depth in config.depths]
+    table = pd.DataFrame(output, columns=columns).sort_values(["Eddy", "Day"])
+    _atomic_parquet(table, partition)
+    return str(partition), "computed"
 
 
 def build_n2_cache_xroms(
     eddies: pd.DataFrame,
-    model_root: Path | str,
-    output_path: Path | str,
+    model_root: Path | str | None = None,
+    output_path: Path | str | None = None,
     *,
     depths=(200, 500),
     rho0=1025.0,
+    workers=4,
+    horizontal_chunk=64,
+    skip_existing=True,
 ):
-    """Extract depth-mean N2 at each eddy centre using xroms.
+    """Build a restartable, model-file-parallel eddy-centre N2 cache.
 
     The calculation follows the documented xroms sequence:
     ``roms_dataset -> density -> N2``. Results are written once as
@@ -227,39 +334,50 @@ def build_n2_cache_xroms(
     transposed arrays used by ``seacofs_tilt_tools``.
     """
 
-    import xarray as xr
-    import xroms
+    from joblib import Parallel, delayed
     from beta_effect_background_flow.background_flow_tools import model_file_for_day
 
     required = {"Eddy", "Day", "ic", "jc"}
     missing = required - set(eddies.columns)
     if missing:
         raise KeyError(f"Missing N2 extraction columns: {sorted(missing)}")
-    work = eddies[list(required)].dropna().drop_duplicates(["Eddy", "Day"]).copy()
-    work["model_file"] = work["Day"].map(lambda day: model_file_for_day(int(day), Path(model_root)))
-    rows = []
-    for model_file, file_rows in work.groupby("model_file", sort=True):
-        with xr.open_dataset(model_file, chunks={"ocean_time": 1}) as raw:
-            ds, xgrid = xroms.roms_dataset(raw)
-            rho = xroms.density(ds["temp"], ds["salt"])
-            n2 = xroms.N2(rho, xgrid, rho0=rho0)
-            z = n2.coords.get("z_w", ds.get("z_w"))
-            if z is None:
-                raise KeyError("xroms did not provide z_w for the N2 field.")
-            model_days = _day_values(ds["ocean_time"])
-            for row in file_rows.itertuples(index=False):
-                t = int(np.nanargmin(np.abs(model_days - float(row.Day))))
-                selector = {"ocean_time": t, "xi_rho": int(row.ic), "eta_rho": int(row.jc)}
-                n2_col = n2.isel(selector).compute().values
-                z_col = z.isel(selector).compute().values
-                record = {"Eddy": row.Eddy, "Day": row.Day}
-                for depth in depths:
-                    record[f"N2_{int(depth)}m_s2"] = _column_depth_mean(n2_col, z_col, depth)
-                rows.append(record)
-    result = pd.DataFrame(rows).sort_values(["Eddy", "Day"])
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    result.to_parquet(output_path, index=False)
+    defaults = N2CacheConfig()
+    config = N2CacheConfig(
+        model_root=Path(model_root) if model_root is not None else defaults.model_root,
+        output_path=Path(output_path) if output_path is not None else defaults.output_path,
+        depths=tuple(int(depth) for depth in depths),
+        rho0=float(rho0),
+        horizontal_chunk=int(horizontal_chunk),
+        skip_existing=bool(skip_existing),
+    )
+    work = eddies[["Eddy", "Day", "ic", "jc"]].dropna().drop_duplicates(["Eddy", "Day"]).copy()
+    work["model_file"] = work["Day"].map(
+        lambda day: model_file_for_day(int(round(day)), config.model_root)
+    )
+    file_rows = {Path(path): part.drop(columns="model_file") for path, part in work.groupby("model_file")}
+    missing_files = [path for path in file_rows if not path.exists()]
+    if missing_files:
+        raise FileNotFoundError(f"Missing {len(missing_files)} model files; first is {missing_files[0]}")
+
+    results = Parallel(n_jobs=int(workers), prefer="processes", verbose=10)(
+        delayed(process_n2_model_file)(path, rows, config)
+        for path, rows in sorted(file_rows.items())
+    )
+    partition_paths = [path for path, _ in results]
+    result = pd.concat([pd.read_parquet(path) for path in partition_paths], ignore_index=True)
+    result = result.sort_values(["Eddy", "Day"]).reset_index(drop=True)
+    if result.duplicated(["Eddy", "Day"]).any():
+        raise ValueError("N2 output contains duplicate Eddy-Day rows.")
+    expected = work[["Eddy", "Day"]].copy()
+    expected["Day"] = expected["Day"].round().astype(int)
+    key_check = expected.merge(
+        result[["Eddy", "Day"]], on=["Eddy", "Day"], how="outer", indicator=True
+    )
+    if not key_check["_merge"].eq("both").all():
+        counts = key_check["_merge"].value_counts().to_dict()
+        raise ValueError(f"Reduced cache does not match requested Eddy-Day keys: {counts}")
+    config.output_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_parquet(result, config.output_path)
     return result
 
 
