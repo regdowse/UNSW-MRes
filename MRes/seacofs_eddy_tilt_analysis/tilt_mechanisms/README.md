@@ -22,8 +22,8 @@ python build_stratification_cache.py --workers 5 --point-batch-size 128
 Start with 4–8 workers and check job memory before increasing concurrency.
 The point batch size controls vectorized column reads and is not a Dask grid
 chunk; the calculation never constructs full-domain xgcm metrics.
-Each completed ROMS file is written to `n2_file_partitions/`; reruns skip those
-partitions unless `--overwrite-partitions` is supplied.
+Each completed ROMS file is written to a cache-versioned partition folder;
+reruns skip those partitions unless `--overwrite-partitions` is supplied.
 
 `mechanism_tools.py` contains only helpers unique to this workflow. The notebooks reuse `seacofs_tilt_tools.py`, `ml_subsurface_tools.py`, and `beta_effect_background_flow/*` for existing functionality.
 

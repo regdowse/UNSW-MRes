@@ -229,7 +229,7 @@ class N2CacheConfig:
     model_root: Path = Path("/srv/scratch/z3533156/26year_BRAN2020")
     output_path: Path = Path(
         "/srv/scratch/z5297792/SEACOFS_26yr_eddy_dataset/"
-        "tilt_mechanisms/n2_eddy_day.parquet"
+        "tilt_mechanisms/n2_eddy_day_v2.parquet"
     )
     z_r_path: Path = Path("/srv/scratch/z5297792/z_r.npy")
     depths: tuple[int, ...] = (200, 500)
@@ -239,7 +239,7 @@ class N2CacheConfig:
 
     @property
     def partition_root(self):
-        return self.output_path.parent / "n2_file_partitions"
+        return self.output_path.parent / f"{self.output_path.stem}_file_partitions"
 
 
 def _n2_partition_path(model_path, config):
@@ -273,6 +273,30 @@ def _n2_from_density(rho_columns, z_columns, rho0=1025.0):
     return n2, z_mid
 
 
+def _align_z_to_roms_levels(z_columns, sigma_coordinate=None):
+    """Match z-column order to raw ROMS tracer order and return negative z."""
+
+    z = np.asarray(z_columns, float)
+    if z.ndim != 2:
+        raise ValueError("z must be a point-by-level array.")
+    if np.nanmedian(z) > 0:
+        z = -np.abs(z)
+    z_first_is_deep = np.nanmedian(np.abs(z[:, 0])) > np.nanmedian(np.abs(z[:, -1]))
+    if sigma_coordinate is None:
+        tracer_first_is_deep = True  # Standard ROMS s_rho storage order.
+    else:
+        sigma = np.asarray(sigma_coordinate, float)
+        if sigma.ndim != 1 or len(sigma) != z.shape[1]:
+            raise ValueError("The sigma coordinate does not match the z levels.")
+        tracer_first_is_deep = sigma[0] < sigma[-1]
+    if z_first_is_deep != tracer_first_is_deep:
+        z = z[:, ::-1]
+    aligned_first_is_deep = np.nanmedian(np.abs(z[:, 0])) > np.nanmedian(np.abs(z[:, -1]))
+    if aligned_first_is_deep != tracer_first_is_deep:
+        raise ValueError("Could not align z_r with the ROMS tracer vertical order.")
+    return z
+
+
 def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
     """Calculate all requested eddy columns in one model file and partition."""
 
@@ -302,6 +326,7 @@ def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
             raise ValueError(f"Could not identify the temperature vertical dimension: {raw['temp'].dims}")
         model_days = np.rint(_day_values(raw["ocean_time"])).astype(int)
         time_for_day = {int(day): t for t, day in enumerate(model_days)}
+        sigma_coordinate = raw[vertical_dim].values if vertical_dim in raw.coords else None
 
         for day, day_rows in rows.groupby("Day", sort=False):
             if int(day) not in time_for_day:
@@ -321,8 +346,7 @@ def process_n2_model_file(model_path, file_rows, config=N2CacheConfig()):
                 temp[np.abs(temp) > 1e30] = np.nan
                 salt[np.abs(salt) > 1e30] = np.nan
                 z_values = np.asarray(z_r[ic, jc, :], float)
-                if np.nanmedian(z_values) > 0:
-                    z_values = -np.abs(z_values)
+                z_values = _align_z_to_roms_levels(z_values, sigma_coordinate)
                 if z_values.shape != temp.shape:
                     raise ValueError(
                         f"z_r columns {z_values.shape} do not match temp columns {temp.shape}."
