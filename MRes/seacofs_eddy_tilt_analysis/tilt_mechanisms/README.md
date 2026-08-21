@@ -31,4 +31,12 @@ reruns skip those partitions unless `--overwrite-partitions` is supplied.
 
 `mechanism_tools.py` contains only helpers unique to this workflow. The notebooks reuse `seacofs_tilt_tools.py`, `ml_subsurface_tools.py`, and `beta_effect_background_flow/*` for existing functionality.
 
+Notebooks 02, 03, and 06 also divide AEs and CEs separately into low, medium,
+and high eddy-level core-N2 tertiles. Their primary directional comparison uses
+N2 residuals from polarity-specific quadratic latitude trends, preventing the
+equatorward stratification gradient from defining the categories by itself.
+The resulting boxplots, rose plots, alignment summaries, heatmaps, and joint
+model forest plots are all eddy-equal where directional observations repeat in
+time.
+
 The notebooks assume they are launched with this directory as the working directory on Katana. Cache paths are declared near the top of the relevant notebooks.

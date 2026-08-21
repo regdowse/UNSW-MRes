@@ -191,6 +191,60 @@ def add_stratification_proxies(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def add_eddy_stratification_categories(
+    df: pd.DataFrame,
+    n2_col="N2_500m_s2",
+    *,
+    class_col="N2Class",
+    latitude_col=None,
+    labels=("Low", "Medium", "High"),
+):
+    """Assign polarity-specific N2 categories using one median value per eddy.
+
+    When ``latitude_col`` is supplied, categories are based on residuals from
+    a separate quadratic N2-latitude fit for each polarity. This distinguishes
+    unusually weak/strong stratification from the basin-scale latitude trend.
+    """
+
+    required = {"Cyc", "Eddy", n2_col}
+    if latitude_col is not None:
+        required.add(latitude_col)
+    if missing := required - set(df.columns):
+        raise KeyError(f"Missing stratification-category columns: {sorted(missing)}")
+    columns = ["Cyc", "Eddy", n2_col]
+    if latitude_col is not None:
+        columns.append(latitude_col)
+    aggregations = {n2_col: "median"}
+    if latitude_col is not None:
+        aggregations[latitude_col] = "median"
+    eddy = df[columns].groupby(["Cyc", "Eddy"], as_index=False).agg(aggregations)
+    value_col = f"{class_col}_value"
+    eddy[value_col] = eddy[n2_col]
+    if latitude_col is not None:
+        for _, index in eddy.groupby("Cyc").groups.items():
+            part = eddy.loc[index, [latitude_col, n2_col]].dropna()
+            if len(part) < 6 or part[latitude_col].nunique() < 3:
+                eddy.loc[index, value_col] = np.nan
+                continue
+            coefficients = np.polyfit(part[latitude_col], part[n2_col], deg=2)
+            expected = np.polyval(coefficients, eddy.loc[index, latitude_col])
+            eddy.loc[index, value_col] = eddy.loc[index, n2_col] - expected
+    eddy[class_col] = pd.NA
+    for _, index in eddy.groupby("Cyc").groups.items():
+        valid = eddy.loc[index, value_col].dropna()
+        if len(valid) < len(labels):
+            continue
+        # Ranking makes equal-sized, deterministic groups even when N2 ties.
+        ranked = valid.rank(method="first")
+        eddy.loc[valid.index, class_col] = pd.qcut(ranked, len(labels), labels=labels)
+    eddy[class_col] = pd.Categorical(eddy[class_col], categories=labels, ordered=True)
+    rename = {n2_col: f"{class_col}_eddy_median_n2"}
+    if latitude_col is not None:
+        rename[latitude_col] = f"{class_col}_eddy_median_latitude"
+    eddy = eddy.rename(columns=rename)
+    return df.merge(eddy, on=["Cyc", "Eddy"], how="left", validate="many_to_one")
+
+
 def _day_values(time):
     values = np.asarray(time.values)
     if np.issubdtype(values.dtype, np.datetime64):
