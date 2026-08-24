@@ -620,6 +620,63 @@ def add_topographic_regimes(df: pd.DataFrame, shelf_depth=2000.0, dominance_rati
     return out
 
 
+def add_temporal_tilt_changes(df: pd.DataFrame, max_gap_days=2.0) -> pd.DataFrame:
+    """Add age, lifetime, and measured tilt-change diagnostics.
+
+    ``TiltDis`` and ``TiltDir`` remain authoritative. Changes are calculated
+    only between consecutive observations of the same eddy; rates spanning a
+    gap longer than ``max_gap_days`` are set to missing.
+    """
+
+    out = add_tilt_components(df).sort_values(["Eddy", "Day"]).copy()
+    grouped = out.groupby("Eddy", sort=False)
+    out["age_days"] = out["Day"] - grouped["Day"].transform("min")
+    out["lifetime_days"] = grouped["Day"].transform("max") - grouped["Day"].transform("min")
+    out["norm_age"] = np.divide(
+        out["age_days"], out["lifetime_days"],
+        out=np.full(len(out), np.nan), where=out["lifetime_days"].to_numpy(float) > 0,
+    )
+    out["dt_days"] = grouped["Day"].diff()
+    valid_step = out["dt_days"].gt(0) & out["dt_days"].le(float(max_gap_days))
+    out["dtilt_km_day"] = grouped["TiltDis"].diff() / out["dt_days"]
+    for component in ("east", "north"):
+        out[f"dtilt_{component}_km_day"] = (
+            grouped[f"tilt_{component}_km"].diff() / out["dt_days"]
+        )
+    previous_direction = grouped["TiltDir"].shift()
+    out["tilt_turn_deg_day"] = (
+        signed_angle_difference(out["TiltDir"], previous_direction) / out["dt_days"]
+    )
+    change_columns = [
+        "dtilt_km_day", "dtilt_east_km_day", "dtilt_north_km_day", "tilt_turn_deg_day",
+    ]
+    out.loc[~valid_step, change_columns] = np.nan
+    return out
+
+
+def add_eddy_pv_exposure_class(df: pd.DataFrame, stable_fraction=2 / 3) -> pd.DataFrame:
+    """Classify each eddy by the fraction of days in each daily PV regime."""
+
+    required = {"Eddy", "PVRegime"}
+    if missing := required - set(df.columns):
+        raise KeyError(f"Missing PV-exposure columns: {sorted(missing)}")
+    fractions = (
+        pd.crosstab(df["Eddy"], df["PVRegime"], normalize="index")
+        .reindex(columns=["planetary", "mixed", "topographic"], fill_value=0.0)
+    )
+    exposure = np.select(
+        [
+            fractions["planetary"] >= float(stable_fraction),
+            fractions["topographic"] >= float(stable_fraction),
+        ],
+        ["planetary-dominated", "topographic-dominated"],
+        default="transitional/mixed",
+    )
+    summary = fractions.add_prefix("fraction_").reset_index()
+    summary["PVExposure"] = exposure
+    return df.merge(summary, on="Eddy", how="left", validate="many_to_one")
+
+
 def add_ekman_transport(df: pd.DataFrame, tau_east="tau_east_pa", tau_north="tau_north_pa", rho0=1025.0):
     """Calculate depth-integrated Ekman transport from geographic wind stress."""
 

@@ -11,6 +11,7 @@ Run order:
 5. `04_depth_dependent_propagation.ipynb`
 6. `05_wind_ekman_sensitivity.ipynb` (optional; requires a wind-stress cache)
 7. `06_joint_mechanism_comparison.ipynb`
+8. `07_temporal_tilt_evolution.ipynb`
 
 The stratification cache is file-parallel and restartable. For every eddy-day,
 it calculates depth-mean N2 at each ocean grid column inside the same
@@ -40,3 +41,11 @@ model forest plots are all eddy-equal where directional observations repeat in
 time.
 
 The notebooks assume they are launched with this directory as the working directory on Katana. Cache paths are declared near the top of the relevant notebooks.
+
+Notebook 07 tests whether measured tilt grows within eddies in absolute and
+normalised age, then separates trajectories into sustained planetary-PV,
+sustained topographic-PV, and transitional/mixed exposure. It includes
+eddy-level slope tests, clustered nonlinear age models, increment/sign tests,
+individual trajectories, PV-regime transitions, and a component-wise test of
+the predicted surface-minus-deep differential displacement. It uses the
+existing vertical-profile dictionary and does not require a new cache.
