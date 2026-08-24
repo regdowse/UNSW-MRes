@@ -89,11 +89,11 @@ def eddy_bootstrap_ci(df, column, group="Cyc", n_boot=5000, seed=42):
     return pd.DataFrame(records)
 
 
-def propagation_summary(df, n_boot=5000):
+def propagation_summary(df, n_boot=5000, vec='north'):
     """Whole-eddy estimates for raw and all background-relative velocities."""
 
-    columns = ["track_north_ms"] + [
-        f"{method}_residual_north_ms" for method in METHODS
+    columns = [f"track_{vec}_ms"] + [
+        f"{method}_residual_{vec}_ms" for method in METHODS
     ]
     return pd.concat(
         [eddy_bootstrap_ci(df, column, n_boot=n_boot) for column in columns],

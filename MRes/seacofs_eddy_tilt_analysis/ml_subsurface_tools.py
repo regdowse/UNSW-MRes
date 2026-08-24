@@ -411,7 +411,7 @@ def plot_direction_oof(predictions, *, title):
     fig.suptitle(title); fig.tight_layout(); return fig, axes
 
 
-def plot_beta_relationship(eddy_table, *, title):
+def plot_beta_relationship(eddy_table, *, title, ylim=None):
     ordered = eddy_table.sort_values("beta").copy()
     ordered["beta_bin"] = pd.qcut(ordered["beta"], 10, duplicates="drop")
     binned = ordered.groupby("beta_bin", observed=True).agg(beta=("beta", "median"),
@@ -420,7 +420,10 @@ def plot_beta_relationship(eddy_table, *, title):
     ax.scatter(ordered["beta"], ordered["tilt_magnitude"], s=8, alpha=0.15, label="Eddy median")
     ax.plot(binned["beta"], binned["tilt"], "o-", color="crimson", label="Decile median")
     ax.set(xlabel="Beta", ylabel="Median tilt magnitude (km)", title=title)
-    ax.legend(); fig.tight_layout(); return fig, ax
+    ax.legend(); fig.tight_layout(); 
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    return fig, ax
 
 
 # ---------------------------------------------------------------------------
