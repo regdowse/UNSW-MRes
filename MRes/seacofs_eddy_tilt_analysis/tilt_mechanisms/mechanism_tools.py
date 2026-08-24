@@ -245,6 +245,35 @@ def add_eddy_stratification_categories(
     return df.merge(eddy, on=["Cyc", "Eddy"], how="left", validate="many_to_one")
 
 
+def residualise_against_controls(df, columns, controls):
+    """Return complete cases with each target residualised on common controls.
+
+    Controls are fitted with an intercept using ordinary least squares. This is
+    intended for transparent partial-relationship plots; clustered GEE models
+    remain the primary repeated-observation inference.
+    """
+
+    columns = list(columns)
+    controls = list(controls)
+    required = columns + controls
+    if missing := set(required) - set(df.columns):
+        raise KeyError(f"Missing residualisation columns: {sorted(missing)}")
+    out = df[required].replace([np.inf, -np.inf], np.nan).dropna().copy()
+    if not len(out):
+        raise ValueError("No complete rows remain for residualisation.")
+    design = np.column_stack([
+        np.ones(len(out)),
+        *[out[column].to_numpy(float) for column in controls],
+    ])
+    if np.linalg.matrix_rank(design) < design.shape[1]:
+        raise ValueError("Residualisation controls are rank deficient.")
+    for column in columns:
+        values = out[column].to_numpy(float)
+        coefficients, *_ = np.linalg.lstsq(design, values, rcond=None)
+        out[f"{column}_resid"] = values - design @ coefficients
+    return out
+
+
 def _day_values(time):
     values = np.asarray(time.values)
     if np.issubdtype(values.dtype, np.datetime64):
