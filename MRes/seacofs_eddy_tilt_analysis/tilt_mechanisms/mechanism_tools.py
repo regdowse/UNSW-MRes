@@ -142,7 +142,7 @@ def circular_offset_summary(df, columns, group=("Cyc",), eddy_equal=True):
 
     records = []
     group = list(group)
-    for keys, part in df.groupby(group, dropna=False):
+    for keys, part in df.groupby(group, dropna=False, observed=True):
         keys = keys if isinstance(keys, tuple) else (keys,)
         for column in columns:
             values = part[["Eddy", column]].dropna()

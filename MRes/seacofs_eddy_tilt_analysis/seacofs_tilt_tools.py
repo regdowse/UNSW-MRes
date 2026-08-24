@@ -1250,15 +1250,6 @@ def plot_pv_dominance(
 
     return fig, axs
 
-def circular_mean_deg_true_north(deg):
-    deg = np.asarray(deg)
-    r = np.deg2rad(deg)
-
-    C = np.mean(np.cos(r))
-    S = np.mean(np.sin(r))
-
-    return np.rad2deg(np.arctan2(S, C)) % 360
-
 def tilt_t(df_data, grid, add_field='PV_grad_mag', field_label='PV grad.',
            figsize=(10,20), nlargest=10, width_ratios=[3, 1]):
 
