@@ -8,6 +8,7 @@ Files:
 - `background_flow_tools.py`: one-pass, restartable, file-parallel background-flow cache builder.
 - `build_background_cache.py`: command-line entry point for a Katana batch job.
 - `background_relative_beta_effect.ipynb`: residual propagation, vorticity-budget, and tilt tests.
+- `vorticity_loss_during_beta_drift.ipynb`: off-shelf beta-aligned drift, daily weakening, cumulative `Delta w = -Delta f`, and whole-eddy bootstrap tests.
 
 The primary background estimate is the instantaneous surface velocity in an annulus around each eddy. In the same model-file pass, the workflow calculates surface, thickness-weighted 0–200 m, and thickness-weighted 0–500 m velocities for the instantaneous annulus, monthly climatology, and exact count-weighted full-archive mean. The cache is built for all eddies; PV-dominance filtering is applied later in the analysis notebook.
 
